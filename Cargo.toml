@@ -1,0 +1,11 @@
+[package]
+name = "simple_x509"
+version = "0.1.0"
+authors = ["awick"]
+
+[dependencies]
+num         = "^0.1.40"
+simple_asn1 = { path = "../simple_asn1" }
+
+[dev-dependencies]
+quickcheck = "^0.4.1"
