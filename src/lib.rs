@@ -5,7 +5,7 @@ extern crate quickcheck;
 #[macro_use]
 extern crate simple_asn1;
 
-use num::{BigInt,BigUint};
+use num::{BigInt,BigUint,ToPrimitive};
 use simple_asn1::{ASN1Block,ASN1Class,FromASN1,OID,ToASN1};
 use simple_asn1::{ASN1DecodeErr,ASN1EncodeErr};
 
@@ -15,9 +15,12 @@ enum HashAlgorithm { MD2, MD5, SHA1, SHA224, SHA256, SHA384, SHA512 }
 #[derive(Clone,Debug,PartialEq)]
 enum PubKeyAlgorithm { RSA, RSAPSS, DSA, EC, DH, Unknown(OID) }
 
+#[derive(Clone,Debug,PartialEq)]
 enum X509ParseError {
     ASN1DecodeError(ASN1DecodeErr),
-    NotEnoughData, ItemNotFound
+    NotEnoughData, ItemNotFound, IllegalFormat, NoSerialNumber,
+    NoSignatureAlgorithm, NoNameInformation, IllFormedNameInformation,
+    NoValueForName
 }
 
 impl From<ASN1DecodeErr> for X509ParseError {
@@ -306,6 +309,210 @@ struct Certificate {
     extensions: Vec<()>
 }
 
+impl FromASN1 for Certificate {
+    type Error = X509ParseError;
+
+    fn from_asn1(bs: &[ASN1Block])
+        -> Result<(Certificate,&[ASN1Block]),X509ParseError>
+    {
+        // Certificate  ::=  SEQUENCE  {
+        //      tbsCertificate       TBSCertificate,
+        //      signatureAlgorithm   AlgorithmIdentifier,
+        //      signatureValue       BIT STRING  }
+        if bs.is_empty() {
+            return Err(X509ParseError::NotEnoughData);
+        }
+        match bs[0] {
+            ASN1Block::Sequence(_, ref v) if v.len() == 3 => {
+                let certblock = get_tbs_certificate(&v[0]);
+                let algblock = get_signature_alg(&v[1])?;
+                let valblock = &v[2];
+
+                println!("certblock: {:?}", certblock);
+                println!("algblock: {:?}", algblock);
+                println!("valblock: {:?}", valblock);
+            }
+            _ =>
+                return Err(X509ParseError::IllegalFormat)
+        }
+
+        Err(X509ParseError::ItemNotFound)
+    }
+}
+
+fn get_tbs_certificate(x: &ASN1Block)
+    -> Result<(),X509ParseError>
+{
+    match x {
+        &ASN1Block::Sequence(_, ref v0) => {
+             // TBSCertificate  ::=  SEQUENCE  {
+             //      version         [0]  Version DEFAULT v1,
+             let (version, v1) = get_version(v0)?;
+             //      serialNumber         CertificateSerialNumber,
+             let (serial, v2) = get_serial_number(v1)?;
+             //      signature            AlgorithmIdentifier,
+             let (algo, v3) = get_signature_info(v2)?;
+             //      issuer               Name,
+             let (names, v4) = get_name_data(v3)?;
+             //      validity             Validity,
+             //      subject              Name,
+             //      subjectPublicKeyInfo SubjectPublicKeyInfo,
+             //      issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
+             //                           -- If present, version MUST be v2 or v3
+             //      subjectUniqueID [2]  IMPLICIT UniqueIdentifier OPTIONAL,
+             //                           -- If present, version MUST be v2 or v3
+             //      extensions      [3]  Extensions OPTIONAL
+             //                           -- If present, version MUST be v3 --  }
+             //
+             println!("version: {}", version);
+             println!("serial#: {}", serial);
+             Err(X509ParseError::IllegalFormat)
+        }
+        _ =>
+            Err(X509ParseError::IllegalFormat)
+    }
+}
+
+fn get_signature_alg(x: &ASN1Block)
+    -> Result<SignatureAlgorithm,X509ParseError>
+{
+    // AlgorithmIdentifier  ::=  SEQUENCE  {
+    //      algorithm               OBJECT IDENTIFIER,
+    //      parameters              ANY DEFINED BY algorithm OPTIONAL  }
+    match x {
+        &ASN1Block::Sequence(_, ref v) if v.len() == 2 => {
+            let (alg, _) = SignatureAlgorithm::from_asn1(v)?;
+            Ok(alg)
+        }
+        _ =>
+            Err(X509ParseError::IllegalFormat)
+    }
+}
+
+fn get_version(bs: &[ASN1Block])
+    -> Result<(u32, &[ASN1Block]),X509ParseError>
+{
+    match bs.first() {
+        Some(&ASN1Block::Integer(_, ref v)) => {
+            match v.to_u8() {
+                Some(0) => Ok((1, &bs[1..])),
+                Some(1) => Ok((2, &bs[1..])),
+                Some(2) => Ok((3, &bs[1..])),
+                _       => Ok((1, &bs))
+            }
+        }
+        _ =>
+            Err(X509ParseError::NoSerialNumber)
+    }
+}
+
+fn get_serial_number(bs: &[ASN1Block])
+    -> Result<(BigUint, &[ASN1Block]),X509ParseError>
+{
+    match bs.first() {
+        Some(&ASN1Block::Integer(_, ref v)) => {
+            match v.to_biguint() {
+                Some(sn) => Ok((sn, &bs[1..])),
+                _        => Err(X509ParseError::NoSerialNumber)
+            }
+        }
+        _ =>
+            Err(X509ParseError::NoSerialNumber)
+    }
+}
+
+fn get_signature_info(bs: &[ASN1Block])
+    -> Result<(SignatureAlgorithm, &[ASN1Block]),X509ParseError>
+{
+    match bs.first() {
+        Some(x) => {
+            let alg = get_signature_alg(&x)?;
+            Ok((alg, &bs[1..]))
+        }
+        _ =>
+            Err(X509ParseError::NoSignatureAlgorithm)
+    }
+}
+
+fn get_name_data(bs: &[ASN1Block])
+    -> Result<((),&[ASN1Block]),X509ParseError>
+{
+    match bs.first() {
+        Some(x) => {
+            match x {
+                //  Name ::= CHOICE { -- only one possibility for now --
+                //     rdnSequence  RDNSequence }
+                //
+                //  RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
+                &ASN1Block::Sequence(_, ref items) => {
+                    // RelativeDistinguishedName ::=
+                    //   SET SIZE (1..MAX) OF AttributeTypeAndValue
+                    for item in items.iter() {
+                        match item {
+                            &ASN1Block::Set(_, ref info) => {
+                                for atv in info.iter() {
+                                    parse_attr_type_val(&atv);
+                                }
+                            }
+                            _ =>
+                                return Err(X509ParseError::IllFormedNameInformation)
+                        }
+                    }
+                    Err(X509ParseError::NoNameInformation)
+                }
+                _ =>
+                    Err(X509ParseError::NoNameInformation)
+            }
+        }
+        _ =>
+            Err(X509ParseError::NoNameInformation)
+    }
+}
+
+fn parse_attr_type_val(val: &ASN1Block)
+    -> Result<(),X509ParseError>
+{
+    match val {
+        &ASN1Block::Sequence(_, ref oidval) => {
+            match oidval.split_first() {
+                Some((&ASN1Block::ObjectIdentifier(_, ref oid), rest)) => {
+                    match rest.first() {
+                        Some(val) => {
+                            process_atv(oid, val)
+                        }
+                        None =>
+                            Err(X509ParseError::NoValueForName)
+                    }
+                }
+                _ =>
+                    Err(X509ParseError::IllFormedNameInformation)
+            }
+        }
+        _ =>
+            Err(X509ParseError::IllFormedNameInformation)
+    }
+}
+
+fn process_atv(oid: &OID, val: &ASN1Block)
+    -> Result<(),X509ParseError>
+{
+    if oid == oid!(2,5,4,3) {
+        println!("Common Name {:?}", val);
+    }
+    if oid == oid!(2,5,4,6) {
+        println!("Country {:?}", val);
+    }
+    if oid == oid!(2,5,4,10) {
+        println!("Organization {:?}", val);
+    }
+    if oid == oid!(2,5,4,11) {
+        println!("organizational unit {:?}", val);
+    }
+    if oid == oid!(1,2,840,113549,1,9,1) {
+        println!("email {:?}", val);
+    }
+    Ok(())
+}
 
 
 #[cfg(test)]
@@ -315,7 +522,7 @@ mod tests {
     use std::fs::File;
     use std::io::Read;
     use super::*;
-    
+
     impl Arbitrary for PubKeyAlgorithm {
         fn arbitrary<G: Gen>(g: &mut G) -> PubKeyAlgorithm {
             match g.gen::<u8>() % 6 {
@@ -449,4 +656,16 @@ mod tests {
         }
     }
 
+    fn can_parse(f: &str) -> Result<Certificate,X509ParseError> {
+        let mut fd = File::open(f).unwrap();
+        let mut buffer = Vec::new();
+        let _amt = fd.read_to_end(&mut buffer);
+        der_decode(&buffer[..])
+    }
+
+    #[test]
+    fn x509_tests() {
+        assert!(can_parse("test/server.bin").is_ok());
+        assert!(can_parse("test/key.bin").is_ok());
+    }
 }
