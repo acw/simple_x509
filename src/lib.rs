@@ -20,7 +20,7 @@ enum X509ParseError {
     ASN1DecodeError(ASN1DecodeErr),
     NotEnoughData, ItemNotFound, IllegalFormat, NoSerialNumber,
     NoSignatureAlgorithm, NoNameInformation, IllFormedNameInformation,
-    NoValueForName
+    NoValueForName, UnknownAttrTypeValue
 }
 
 impl From<ASN1DecodeErr> for X509ParseError {
@@ -434,6 +434,14 @@ fn get_signature_info(bs: &[ASN1Block])
     }
 }
 
+#[derive(Clone,Debug,PartialEq)]
+struct InfoBlock {
+    country: String,
+    organization: String,
+    unit: String,
+    email: String
+}
+
 fn get_name_data(bs: &[ASN1Block])
     -> Result<((),&[ASN1Block]),X509ParseError>
 {
@@ -447,11 +455,16 @@ fn get_name_data(bs: &[ASN1Block])
                 &ASN1Block::Sequence(_, ref items) => {
                     // RelativeDistinguishedName ::=
                     //   SET SIZE (1..MAX) OF AttributeTypeAndValue
+                    let mut iblock = InfoBlock { country: "".to_string(),
+                                                 organization: "".to_string(),
+                                                 unit: "".to_string(),
+                                                 email: "".to_string() };
+
                     for item in items.iter() {
                         match item {
                             &ASN1Block::Set(_, ref info) => {
                                 for atv in info.iter() {
-                                    parse_attr_type_val(&atv);
+                                    parse_attr_type_val(&atv, &mut iblock);
                                 }
                             }
                             _ =>
@@ -469,16 +482,21 @@ fn get_name_data(bs: &[ASN1Block])
     }
 }
 
-fn parse_attr_type_val(val: &ASN1Block)
+fn parse_attr_type_val(val: &ASN1Block, iblock: &mut InfoBlock)
     -> Result<(),X509ParseError>
 {
     match val {
+        //   AttributeTypeAndValue ::= SEQUENCE {
+        //     type     AttributeType,
+        //     value    AttributeValue }
         &ASN1Block::Sequence(_, ref oidval) => {
             match oidval.split_first() {
+                //   AttributeType ::= OBJECT IDENTIFIER
                 Some((&ASN1Block::ObjectIdentifier(_, ref oid), rest)) => {
                     match rest.first() {
+                        //   AttributeValue ::= ANY -- DEFINED BY AttributeType
                         Some(val) => {
-                            process_atv(oid, val)
+                            process_atv(oid, val, iblock)
                         }
                         None =>
                             Err(X509ParseError::NoValueForName)
@@ -493,25 +511,113 @@ fn parse_attr_type_val(val: &ASN1Block)
     }
 }
 
-fn process_atv(oid: &OID, val: &ASN1Block)
+fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     -> Result<(),X509ParseError>
 {
+    //-- Arc for standard naming attributes
+    //
+    //id-at OBJECT IDENTIFIER ::= { joint-iso-ccitt(2) ds(5) 4 }
+    //
+    //-- Naming attributes of type X520name
+    //
+    //id-at-name                AttributeType ::= { id-at 41 }
+    if oid == oid!(2,5,4,41) {
+    }
+    //id-at-surname             AttributeType ::= { id-at  4 }
+    if oid == oid!(2,5,4,4) {
+    }
+    //id-at-givenName           AttributeType ::= { id-at 42 }
+    if oid == oid!(2,5,4,42) {
+    }
+    //id-at-initials            AttributeType ::= { id-at 43 }
+    if oid == oid!(2,5,4,43) {
+    }
+    //id-at-generationQualifier AttributeType ::= { id-at 44 }
+    if oid == oid!(2,5,4,44) {
+    }
+    //
+    //-- Naming attributes of type X520CommonName
+    //
+    //id-at-commonName        AttributeType ::= { id-at 3 }
     if oid == oid!(2,5,4,3) {
-        println!("Common Name {:?}", val);
     }
-    if oid == oid!(2,5,4,6) {
-        println!("Country {:?}", val);
+    //-- Naming attributes of type X520LocalityName
+    //
+    //id-at-localityName      AttributeType ::= { id-at 7 }
+    if oid == oid!(2,5,4,7) {
     }
+    //-- Naming attributes of type X520StateOrProvinceName
+    //
+    //id-at-stateOrProvinceName AttributeType ::= { id-at 8 }
+    if oid == oid!(2,5,4,8) {
+    }
+    //-- Naming attributes of type X520OrganizationName
+    //
+    //id-at-organizationName  AttributeType ::= { id-at 10 }
     if oid == oid!(2,5,4,10) {
         println!("Organization {:?}", val);
     }
+    //-- Naming attributes of type X520OrganizationalUnitName
+    //
+    //id-at-organizationalUnitName AttributeType ::= { id-at 11 }
     if oid == oid!(2,5,4,11) {
         println!("organizational unit {:?}", val);
     }
+    //-- Naming attributes of type X520Title
+    //
+    //id-at-title             AttributeType ::= { id-at 12 }
+    if oid == oid!(2,5,4,12) {
+    }
+    //-- Naming attributes of type X520dnQualifier
+    //
+    //id-at-dnQualifier       AttributeType ::= { id-at 46 }
+    //
+    //X520dnQualifier ::=     PrintableString
+    if oid == oid!(2,5,4,46) {
+    }
+    //
+    //-- Naming attributes of type X520countryName (digraph from IS 3166)
+    //
+    //id-at-countryName       AttributeType ::= { id-at 6 }
+    //
+    //X520countryName ::=     PrintableString (SIZE (2))
+    if oid == oid!(2,5,4,6) {
+        println!("Country {:?}", val);
+    }
+    //
+    //-- Naming attributes of type X520SerialNumber
+    //
+    //id-at-serialNumber      AttributeType ::= { id-at 5 }
+    //
+    //X520SerialNumber ::=    PrintableString (SIZE (1..ub-serial-number))
+    if oid == oid!(2,5,4,5) {
+    }
+    //
+    //-- Naming attributes of type X520Pseudonym
+    //
+    //id-at-pseudonym         AttributeType ::= { id-at 65 }
+    if oid == oid!(2,5,4,65) {
+    }
+    //-- Naming attributes of type DomainComponent (from RFC 4519)
+    //
+    //id-domainComponent   AttributeType ::= { 0 9 2342 19200300 100 1 25 }
+    //
+    //DomainComponent ::=  IA5String
+    if oid == oid!(0,9,2342,19200300,100,1,25) {
+    }
+    //-- Legacy attributes
+    //
+    //pkcs-9 OBJECT IDENTIFIER ::=
+    //       { iso(1) member-body(2) us(840) rsadsi(113549) pkcs(1) 9 }
+    //
+    //id-emailAddress      AttributeType ::= { pkcs-9 1 }
+    //
+    //EmailAddress ::=     IA5String (SIZE (1..ub-emailaddress-length))
     if oid == oid!(1,2,840,113549,1,9,1) {
         println!("email {:?}", val);
     }
-    Ok(())
+
+    Err(X509ParseError::UnknownAttrTypeValue)
 }
 
 
