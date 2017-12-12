@@ -20,7 +20,7 @@ enum X509ParseError {
     ASN1DecodeError(ASN1DecodeErr),
     NotEnoughData, ItemNotFound, IllegalFormat, NoSerialNumber,
     NoSignatureAlgorithm, NoNameInformation, IllFormedNameInformation,
-    NoValueForName, UnknownAttrTypeValue
+    NoValueForName, UnknownAttrTypeValue, IllegalStringValue
 }
 
 impl From<ASN1DecodeErr> for X509ParseError {
@@ -366,6 +366,7 @@ fn get_tbs_certificate(x: &ASN1Block)
              //
              println!("version: {}", version);
              println!("serial#: {}", serial);
+             println!("names: {:?}", names);
              Err(X509ParseError::IllegalFormat)
         }
         _ =>
@@ -436,14 +437,49 @@ fn get_signature_info(bs: &[ASN1Block])
 
 #[derive(Clone,Debug,PartialEq)]
 struct InfoBlock {
-    country: String,
+    name: String,
+    surname: String,
+    given_name: String,
+    initials: String,
+    generation_qualifier: String,
+    common_name: String,
+    locality: String,
+    state_province: String,
     organization: String,
     unit: String,
+    title: String,
+    dn_qualifier: String,
+    country: String,
+    serial_number: String,
+    pseudonym: String,
+    domain_component: String,
     email: String
 }
 
+fn empty_block() -> InfoBlock {
+    InfoBlock {
+        name:                 "".to_string(),
+        surname:              "".to_string(),
+        given_name:           "".to_string(),
+        initials:             "".to_string(),
+        generation_qualifier: "".to_string(),
+        common_name:          "".to_string(),
+        locality:             "".to_string(),
+        state_province:       "".to_string(),
+        organization:         "".to_string(),
+        unit:                 "".to_string(),
+        title:                "".to_string(),
+        dn_qualifier:         "".to_string(),
+        country:              "".to_string(),
+        serial_number:        "".to_string(),
+        pseudonym:            "".to_string(),
+        domain_component:     "".to_string(),
+        email:                "".to_string()
+    }
+}
+
 fn get_name_data(bs: &[ASN1Block])
-    -> Result<((),&[ASN1Block]),X509ParseError>
+    -> Result<(InfoBlock,&[ASN1Block]),X509ParseError>
 {
     match bs.first() {
         Some(x) => {
@@ -455,10 +491,7 @@ fn get_name_data(bs: &[ASN1Block])
                 &ASN1Block::Sequence(_, ref items) => {
                     // RelativeDistinguishedName ::=
                     //   SET SIZE (1..MAX) OF AttributeTypeAndValue
-                    let mut iblock = InfoBlock { country: "".to_string(),
-                                                 organization: "".to_string(),
-                                                 unit: "".to_string(),
-                                                 email: "".to_string() };
+                    let mut iblock = empty_block();
 
                     for item in items.iter() {
                         match item {
@@ -471,7 +504,7 @@ fn get_name_data(bs: &[ASN1Block])
                                 return Err(X509ParseError::IllFormedNameInformation)
                         }
                     }
-                    Err(X509ParseError::NoNameInformation)
+                    Ok((iblock, &bs[1..]))
                 }
                 _ =>
                     Err(X509ParseError::NoNameInformation)
@@ -522,51 +555,60 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //id-at-name                AttributeType ::= { id-at 41 }
     if oid == oid!(2,5,4,41) {
+        iblock.name = getStringValue(val)?;
     }
     //id-at-surname             AttributeType ::= { id-at  4 }
     if oid == oid!(2,5,4,4) {
+        iblock.surname = getStringValue(val)?;
     }
     //id-at-givenName           AttributeType ::= { id-at 42 }
     if oid == oid!(2,5,4,42) {
+        iblock.given_name = getStringValue(val)?;
     }
     //id-at-initials            AttributeType ::= { id-at 43 }
     if oid == oid!(2,5,4,43) {
+        iblock.initials = getStringValue(val)?;
     }
     //id-at-generationQualifier AttributeType ::= { id-at 44 }
     if oid == oid!(2,5,4,44) {
+        iblock.generation_qualifier = getStringValue(val)?;
     }
     //
     //-- Naming attributes of type X520CommonName
     //
     //id-at-commonName        AttributeType ::= { id-at 3 }
     if oid == oid!(2,5,4,3) {
+        iblock.common_name = getStringValue(val)?;
     }
     //-- Naming attributes of type X520LocalityName
     //
     //id-at-localityName      AttributeType ::= { id-at 7 }
     if oid == oid!(2,5,4,7) {
+        iblock.locality = getStringValue(val)?;
     }
     //-- Naming attributes of type X520StateOrProvinceName
     //
     //id-at-stateOrProvinceName AttributeType ::= { id-at 8 }
     if oid == oid!(2,5,4,8) {
+        iblock.state_province = getStringValue(val)?;
     }
     //-- Naming attributes of type X520OrganizationName
     //
     //id-at-organizationName  AttributeType ::= { id-at 10 }
     if oid == oid!(2,5,4,10) {
-        println!("Organization {:?}", val);
+        iblock.organization = getStringValue(val)?;
     }
     //-- Naming attributes of type X520OrganizationalUnitName
     //
     //id-at-organizationalUnitName AttributeType ::= { id-at 11 }
     if oid == oid!(2,5,4,11) {
-        println!("organizational unit {:?}", val);
+        iblock.unit = getStringValue(val)?;
     }
     //-- Naming attributes of type X520Title
     //
     //id-at-title             AttributeType ::= { id-at 12 }
     if oid == oid!(2,5,4,12) {
+        iblock.title = getStringValue(val)?;
     }
     //-- Naming attributes of type X520dnQualifier
     //
@@ -574,6 +616,7 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //X520dnQualifier ::=     PrintableString
     if oid == oid!(2,5,4,46) {
+        iblock.dn_qualifier = getPrintableStringValue(val)?;
     }
     //
     //-- Naming attributes of type X520countryName (digraph from IS 3166)
@@ -582,7 +625,10 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //X520countryName ::=     PrintableString (SIZE (2))
     if oid == oid!(2,5,4,6) {
-        println!("Country {:?}", val);
+        iblock.country = getPrintableStringValue(val)?;
+        if iblock.country.len() != 2 {
+            return Err(X509ParseError::IllegalStringValue);
+        }
     }
     //
     //-- Naming attributes of type X520SerialNumber
@@ -591,12 +637,14 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //X520SerialNumber ::=    PrintableString (SIZE (1..ub-serial-number))
     if oid == oid!(2,5,4,5) {
+        iblock.serial_number = getPrintableStringValue(val)?;
     }
     //
     //-- Naming attributes of type X520Pseudonym
     //
     //id-at-pseudonym         AttributeType ::= { id-at 65 }
     if oid == oid!(2,5,4,65) {
+        iblock.pseudonym = getStringValue(val)?;
     }
     //-- Naming attributes of type DomainComponent (from RFC 4519)
     //
@@ -604,6 +652,7 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //DomainComponent ::=  IA5String
     if oid == oid!(0,9,2342,19200300,100,1,25) {
+        iblock.domain_component = getIA5StringValue(val)?;
     }
     //-- Legacy attributes
     //
@@ -614,10 +663,41 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //EmailAddress ::=     IA5String (SIZE (1..ub-emailaddress-length))
     if oid == oid!(1,2,840,113549,1,9,1) {
-        println!("email {:?}", val);
+        iblock.email = getIA5StringValue(val)?;
     }
 
     Err(X509ParseError::UnknownAttrTypeValue)
+}
+
+fn getStringValue(a: &ASN1Block) -> Result<String,X509ParseError>
+{
+    match a {
+        &ASN1Block::TeletexString(_,ref v)   => Ok(v.clone()),
+        &ASN1Block::PrintableString(_,ref v) => Ok(v.clone()),
+        &ASN1Block::UniversalString(_,ref v) => Ok(v.clone()),
+        &ASN1Block::UTF8String(_,ref v)      => Ok(v.clone()),
+        &ASN1Block::BMPString(_,ref v)       => Ok(v.clone()),
+        _                                    =>
+            Err(X509ParseError::IllegalStringValue)
+    }
+}
+
+fn getPrintableStringValue(a: &ASN1Block) -> Result<String,X509ParseError>
+{
+    match a {
+        &ASN1Block::PrintableString(_,ref v) => Ok(v.clone()),
+        _                                    =>
+            Err(X509ParseError::IllegalStringValue)
+    }
+}
+
+fn getIA5StringValue(a: &ASN1Block) -> Result<String,X509ParseError>
+{
+    match a {
+        &ASN1Block::IA5String(_,ref v)       => Ok(v.clone()),
+        _                                    =>
+            Err(X509ParseError::IllegalStringValue)
+    }
 }
 
 
