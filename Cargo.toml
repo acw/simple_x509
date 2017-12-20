@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["awick"]
 
 [dependencies]
+chrono      = "^0.4.0"
 num         = "^0.1.40"
 simple_asn1 = { path = "../simple_asn1" }
 

@@ -1,3 +1,4 @@
+extern crate chrono;
 extern crate num;
 #[cfg(test)]
 #[macro_use]
@@ -5,6 +6,7 @@ extern crate quickcheck;
 #[macro_use]
 extern crate simple_asn1;
 
+use chrono::{DateTime,Utc};
 use num::{BigInt,BigUint,ToPrimitive};
 use simple_asn1::{ASN1Block,ASN1Class,FromASN1,OID,ToASN1};
 use simple_asn1::{ASN1DecodeErr,ASN1EncodeErr};
@@ -20,7 +22,8 @@ enum X509ParseError {
     ASN1DecodeError(ASN1DecodeErr),
     NotEnoughData, ItemNotFound, IllegalFormat, NoSerialNumber,
     NoSignatureAlgorithm, NoNameInformation, IllFormedNameInformation,
-    NoValueForName, UnknownAttrTypeValue, IllegalStringValue
+    NoValueForName, UnknownAttrTypeValue, IllegalStringValue, NoValidityInfo,
+    ImproperValidityInfo
 }
 
 impl From<ASN1DecodeErr> for X509ParseError {
@@ -353,9 +356,12 @@ fn get_tbs_certificate(x: &ASN1Block)
              //      signature            AlgorithmIdentifier,
              let (algo, v3) = get_signature_info(v2)?;
              //      issuer               Name,
-             let (names, v4) = get_name_data(v3)?;
+             let (issuer, v4) = get_name_data(v3)?;
              //      validity             Validity,
+             let (validity, v5) = get_validity_data(v4)?;
              //      subject              Name,
+             let (subject, v6) = get_name_data(v5)?;
+             println!("v6: {:?}", v6);
              //      subjectPublicKeyInfo SubjectPublicKeyInfo,
              //      issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
              //                           -- If present, version MUST be v2 or v3
@@ -366,7 +372,9 @@ fn get_tbs_certificate(x: &ASN1Block)
              //
              println!("version: {}", version);
              println!("serial#: {}", serial);
-             println!("names: {:?}", names);
+             println!("issuer: {:?}", issuer);
+             println!("validity: {:?}", validity);
+             println!("subject: {:?}", subject);
              Err(X509ParseError::IllegalFormat)
         }
         _ =>
@@ -700,6 +708,40 @@ fn getIA5StringValue(a: &ASN1Block) -> Result<String,X509ParseError>
     }
 }
 
+#[derive(Clone,Debug,PartialEq)]
+struct Validity {
+    notBefore: DateTime<Utc>,
+    notAfter:  DateTime<Utc>
+}
+
+fn get_validity_data(bs: &[ASN1Block])
+    -> Result<(Validity,&[ASN1Block]),X509ParseError>
+{
+    match bs.first() {
+        // Validity ::= SEQUENCE {
+        //      notBefore      Time,
+        //      notAfter       Time  }
+        Some(&ASN1Block::Sequence(_, ref valxs)) => {
+            if valxs.len() != 2 {
+                return Err(X509ParseError::ImproperValidityInfo);
+            }
+            let nb = get_time(&valxs[0])?;
+            let na = get_time(&valxs[1])?;
+            Ok((Validity{ notBefore: nb, notAfter: na }, &bs[1..]))
+        }
+        _ =>
+            Err(X509ParseError::NoValidityInfo)
+    }
+}
+
+fn get_time(b: &ASN1Block) -> Result<DateTime<Utc>, X509ParseError> {
+    match b {
+        &ASN1Block::UTCTime(_, v)         => Ok(v.clone()),
+        &ASN1Block::GeneralizedTime(_, v) => Ok(v.clone()),
+        _                                 =>
+            Err(X509ParseError::ImproperValidityInfo)
+    }
+}
 
 #[cfg(test)]
 mod tests {
