@@ -7,8 +7,8 @@ extern crate quickcheck;
 extern crate simple_asn1;
 
 use chrono::{DateTime,Utc};
-use num::{BigInt,BigUint,ToPrimitive};
-use simple_asn1::{ASN1Block,ASN1Class,FromASN1,OID,ToASN1};
+use num::{BigUint,ToPrimitive};
+use simple_asn1::{ASN1Block,ASN1Class,FromASN1,FromASN1WithBody,OID,ToASN1};
 use simple_asn1::{ASN1DecodeErr,ASN1EncodeErr,der_decode};
 
 #[derive(Clone,Debug,PartialEq)]
@@ -25,7 +25,8 @@ enum X509ParseError {
     NoValueForName, UnknownAttrTypeValue, IllegalStringValue, NoValidityInfo,
     ImproperValidityInfo, NoSubjectPublicKeyInfo, ImproperSubjectPublicKeyInfo,
     BadPublicKeyAlgorithm, UnsupportedPublicKey, InvalidRSAKey,
-    UnsupportedExtension, UnexpectedNegativeNumber, MissingNumber
+    UnsupportedExtension, UnexpectedNegativeNumber, MissingNumber,
+    NoSignatureFound
 }
 
 #[derive(Clone,Debug,PartialEq)]
@@ -49,7 +50,7 @@ impl FromASN1 for RSAPublicKey {
         match bs.split_first() {
             None =>
                 Err(X509ParseError::ItemNotFound),
-            Some((&ASN1Block::Sequence(_, ref items), rest))
+            Some((&ASN1Block::Sequence(_, _, ref items), rest))
                 if items.len() == 2 =>
             {
                 let n = decode_biguint(&items[0])?;
@@ -87,7 +88,7 @@ impl FromASN1 for PubKeyAlgorithm {
             None => Err(X509ParseError::NotEnoughData),
             Some((x, rest)) => {
                 match x {
-                    &ASN1Block::ObjectIdentifier(_, ref oid) => {
+                    &ASN1Block::ObjectIdentifier(_, _, ref oid) => {
                         if oid == oid!(1,2,840,113549,1,1,1) {
                             return Ok((PubKeyAlgorithm::RSA, rest))
                         }
@@ -120,17 +121,17 @@ impl ToASN1 for PubKeyAlgorithm {
     {
         let res = match self {
             &PubKeyAlgorithm::RSA =>
-                ASN1Block::ObjectIdentifier(c, oid!(1,2,840,113549,1,1,1)),
+                ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,113549,1,1,1)),
             &PubKeyAlgorithm::RSAPSS =>
-                ASN1Block::ObjectIdentifier(c, oid!(1,2,840,113549,1,1,10)),
+                ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,113549,1,1,10)),
             &PubKeyAlgorithm::DSA =>
-                ASN1Block::ObjectIdentifier(c, oid!(1,2,840,10040,4,1)),
+                ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,10040,4,1)),
             &PubKeyAlgorithm::EC =>
-                ASN1Block::ObjectIdentifier(c, oid!(1,2,840,10045,2,1)),
+                ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,10045,2,1)),
             &PubKeyAlgorithm::DH =>
-                ASN1Block::ObjectIdentifier(c, oid!(1,2,840,10046,2,1)),
+                ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,10046,2,1)),
             &PubKeyAlgorithm::Unknown(ref oid) =>
-                ASN1Block::ObjectIdentifier(c, oid.clone())
+                ASN1Block::ObjectIdentifier(c, 0, oid.clone())
         };
         Ok(vec![res])
     }
@@ -152,7 +153,7 @@ impl FromASN1 for SignatureAlgorithm {
             None => Err(X509ParseError::NotEnoughData),
             Some((x, rest)) => {
                 match x {
-                    &ASN1Block::ObjectIdentifier(_, ref oid) => {
+                    &ASN1Block::ObjectIdentifier(_, _, ref oid) => {
                         if oid == oid!(1,2,840,113549,1,1,1) {
                             return Ok((SignatureAlgorithm {
                                 hash_alg: HashAlgorithm::None,
@@ -381,7 +382,7 @@ impl ToASN1 for SignatureAlgorithm {
                     _                     => return Err(badval)
                 }
         };
-        Ok(vec![ASN1Block::ObjectIdentifier(c, oid)])
+        Ok(vec![ASN1Block::ObjectIdentifier(c, 0, oid)])
     }
 }
 
@@ -397,34 +398,38 @@ struct Certificate {
     extensions: Vec<()>
 }
 
-impl FromASN1 for Certificate {
+impl FromASN1WithBody for Certificate {
     type Error = X509ParseError;
 
-    fn from_asn1(bs: &[ASN1Block])
-        -> Result<(Certificate,&[ASN1Block]),X509ParseError>
+    fn from_asn1_with_body<'a>(bs: &'a[ASN1Block], v: &[u8])
+        -> Result<(Certificate,&'a[ASN1Block]),X509ParseError>
     {
-        // Certificate  ::=  SEQUENCE  {
-        //      tbsCertificate       TBSCertificate,
-        //      signatureAlgorithm   AlgorithmIdentifier,
-        //      signatureValue       BIT STRING  }
-        if bs.is_empty() {
-            return Err(X509ParseError::NotEnoughData);
-        }
-        match bs[0] {
-            ASN1Block::Sequence(_, ref v) if v.len() == 3 => {
-                let certblock = get_tbs_certificate(&v[0]);
+        match bs.split_first() {
+            None =>
+                Err(X509ParseError::NotEnoughData),
+            Some((&ASN1Block::Sequence(_,_,ref v), rest)) if v.len() == 3 => {
+                // Certificate  ::=  SEQUENCE  {
+                //      tbsCertificate       TBSCertificate,
+                //      signatureAlgorithm   AlgorithmIdentifier,
+                //      signatureValue       BIT STRING  }
+                let certblock = get_tbs_certificate(&v[0])?;
                 let algblock = get_signature_alg(&v[1])?;
-                let valblock = &v[2];
-
-                println!("certblock: {:?}", certblock);
-                println!("algblock: {:?}", algblock);
-                println!("valblock: {:?}", valblock);
+                let hashend = v[1].offset();
+                match v[2] {
+                    ASN1Block::BitString(_, _, size, ref sig)
+                        if size % 8 == 0 =>
+                    {
+                        println!("Offset: {}", hashend);
+                        println!("Algblock: {:?}", algblock);
+                        Ok((certblock, rest))
+                    }
+                    _ =>
+                        Err(X509ParseError::NoSignatureFound)
+                }
             }
-            _ =>
-                return Err(X509ParseError::IllegalFormat)
+            Some(_) =>
+                Err(X509ParseError::ItemNotFound)
         }
-
-        Err(X509ParseError::ItemNotFound)
     }
 }
 
@@ -432,7 +437,7 @@ fn get_tbs_certificate(x: &ASN1Block)
     -> Result<Certificate,X509ParseError>
 {
     match x {
-        &ASN1Block::Sequence(_, ref v0) => {
+        &ASN1Block::Sequence(_, _, ref v0) => {
              // TBSCertificate  ::=  SEQUENCE  {
              //      version         [0]  Version DEFAULT v1,
              let (version, v1) = get_version(v0)?;
@@ -488,7 +493,7 @@ fn get_signature_alg(x: &ASN1Block)
     //      algorithm               OBJECT IDENTIFIER,
     //      parameters              ANY DEFINED BY algorithm OPTIONAL  }
     match x {
-        &ASN1Block::Sequence(_, ref v) if v.len() == 2 => {
+        &ASN1Block::Sequence(_, _, ref v) if v.len() == 2 => {
             let (alg, _) = SignatureAlgorithm::from_asn1(v)?;
             Ok(alg)
         }
@@ -501,7 +506,7 @@ fn get_version(bs: &[ASN1Block])
     -> Result<(u32, &[ASN1Block]),X509ParseError>
 {
     match bs.split_first() {
-        Some((&ASN1Block::Integer(_, ref v), rest)) => {
+        Some((&ASN1Block::Integer(_, _, ref v), rest)) => {
             match v.to_u8() {
                 Some(0) => Ok((1, rest)),
                 Some(1) => Ok((2, rest)),
@@ -529,7 +534,7 @@ fn get_serial(bs: &[ASN1Block])
 
 fn decode_biguint(b: &ASN1Block) -> Result<BigUint,X509ParseError> {
     match b {
-        &ASN1Block::Integer(_, ref v) => {
+        &ASN1Block::Integer(_, _, ref v) => {
             match v.to_biguint() {
                 Some(sn) => Ok(sn),
                 _        => Err(X509ParseError::UnexpectedNegativeNumber)
@@ -606,16 +611,16 @@ fn get_name_data(bs: &[ASN1Block])
                 //     rdnSequence  RDNSequence }
                 //
                 //  RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
-                &ASN1Block::Sequence(_, ref items) => {
+                &ASN1Block::Sequence(_, _, ref items) => {
                     // RelativeDistinguishedName ::=
                     //   SET SIZE (1..MAX) OF AttributeTypeAndValue
                     let mut iblock = empty_block();
 
                     for item in items.iter() {
                         match item {
-                            &ASN1Block::Set(_, ref info) => {
+                            &ASN1Block::Set(_, _, ref info) => {
                                 for atv in info.iter() {
-                                    parse_attr_type_val(&atv, &mut iblock);
+                                    parse_attr_type_val(&atv, &mut iblock)?;
                                 }
                             }
                             _ =>
@@ -640,15 +645,14 @@ fn parse_attr_type_val(val: &ASN1Block, iblock: &mut InfoBlock)
         //   AttributeTypeAndValue ::= SEQUENCE {
         //     type     AttributeType,
         //     value    AttributeValue }
-        &ASN1Block::Sequence(_, ref oidval) => {
+        &ASN1Block::Sequence(_, _, ref oidval) => {
             match oidval.split_first() {
                 //   AttributeType ::= OBJECT IDENTIFIER
-                Some((&ASN1Block::ObjectIdentifier(_, ref oid), rest)) => {
+                Some((&ASN1Block::ObjectIdentifier(_, _, ref oid), rest)) => {
                     match rest.first() {
                         //   AttributeValue ::= ANY -- DEFINED BY AttributeType
-                        Some(val) => {
-                            process_atv(oid, val, iblock)
-                        }
+                        Some(val) =>
+                            process_atv(oid, val, iblock),
                         None =>
                             Err(X509ParseError::NoValueForName)
                     }
@@ -673,60 +677,71 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //id-at-name                AttributeType ::= { id-at 41 }
     if oid == oid!(2,5,4,41) {
-        iblock.name = getStringValue(val)?;
+        iblock.name = get_string_value(val)?;
+        return Ok(());
     }
     //id-at-surname             AttributeType ::= { id-at  4 }
     if oid == oid!(2,5,4,4) {
-        iblock.surname = getStringValue(val)?;
+        iblock.surname = get_string_value(val)?;
+        return Ok(());
     }
     //id-at-givenName           AttributeType ::= { id-at 42 }
     if oid == oid!(2,5,4,42) {
-        iblock.given_name = getStringValue(val)?;
+        iblock.given_name = get_string_value(val)?;
+        return Ok(());
     }
     //id-at-initials            AttributeType ::= { id-at 43 }
     if oid == oid!(2,5,4,43) {
-        iblock.initials = getStringValue(val)?;
+        iblock.initials = get_string_value(val)?;
+        return Ok(());
     }
     //id-at-generationQualifier AttributeType ::= { id-at 44 }
     if oid == oid!(2,5,4,44) {
-        iblock.generation_qualifier = getStringValue(val)?;
+        iblock.generation_qualifier = get_string_value(val)?;
+        return Ok(());
     }
     //
     //-- Naming attributes of type X520CommonName
     //
     //id-at-commonName        AttributeType ::= { id-at 3 }
     if oid == oid!(2,5,4,3) {
-        iblock.common_name = getStringValue(val)?;
+        iblock.common_name = get_string_value(val)?;
+        return Ok(());
     }
     //-- Naming attributes of type X520LocalityName
     //
     //id-at-localityName      AttributeType ::= { id-at 7 }
     if oid == oid!(2,5,4,7) {
-        iblock.locality = getStringValue(val)?;
+        iblock.locality = get_string_value(val)?;
+        return Ok(());
     }
     //-- Naming attributes of type X520StateOrProvinceName
     //
     //id-at-stateOrProvinceName AttributeType ::= { id-at 8 }
     if oid == oid!(2,5,4,8) {
-        iblock.state_province = getStringValue(val)?;
+        iblock.state_province = get_string_value(val)?;
+        return Ok(());
     }
     //-- Naming attributes of type X520OrganizationName
     //
     //id-at-organizationName  AttributeType ::= { id-at 10 }
     if oid == oid!(2,5,4,10) {
-        iblock.organization = getStringValue(val)?;
+        iblock.organization = get_string_value(val)?;
+        return Ok(());
     }
     //-- Naming attributes of type X520OrganizationalUnitName
     //
     //id-at-organizationalUnitName AttributeType ::= { id-at 11 }
     if oid == oid!(2,5,4,11) {
-        iblock.unit = getStringValue(val)?;
+        iblock.unit = get_string_value(val)?;
+        return Ok(());
     }
     //-- Naming attributes of type X520Title
     //
     //id-at-title             AttributeType ::= { id-at 12 }
     if oid == oid!(2,5,4,12) {
-        iblock.title = getStringValue(val)?;
+        iblock.title = get_string_value(val)?;
+        return Ok(());
     }
     //-- Naming attributes of type X520dnQualifier
     //
@@ -734,7 +749,8 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //X520dnQualifier ::=     PrintableString
     if oid == oid!(2,5,4,46) {
-        iblock.dn_qualifier = getPrintableStringValue(val)?;
+        iblock.dn_qualifier = get_printable_string_value(val)?;
+        return Ok(());
     }
     //
     //-- Naming attributes of type X520countryName (digraph from IS 3166)
@@ -743,10 +759,11 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //X520countryName ::=     PrintableString (SIZE (2))
     if oid == oid!(2,5,4,6) {
-        iblock.country = getPrintableStringValue(val)?;
+        iblock.country = get_printable_string_value(val)?;
         if iblock.country.len() != 2 {
             return Err(X509ParseError::IllegalStringValue);
         }
+        return Ok(());
     }
     //
     //-- Naming attributes of type X520SerialNumber
@@ -755,14 +772,16 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //X520SerialNumber ::=    PrintableString (SIZE (1..ub-serial-number))
     if oid == oid!(2,5,4,5) {
-        iblock.serial_number = getPrintableStringValue(val)?;
+        iblock.serial_number = get_printable_string_value(val)?;
+        return Ok(());
     }
     //
     //-- Naming attributes of type X520Pseudonym
     //
     //id-at-pseudonym         AttributeType ::= { id-at 65 }
     if oid == oid!(2,5,4,65) {
-        iblock.pseudonym = getStringValue(val)?;
+        iblock.pseudonym = get_string_value(val)?;
+        return Ok(());
     }
     //-- Naming attributes of type DomainComponent (from RFC 4519)
     //
@@ -770,7 +789,8 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //DomainComponent ::=  IA5String
     if oid == oid!(0,9,2342,19200300,100,1,25) {
-        iblock.domain_component = getIA5StringValue(val)?;
+        iblock.domain_component = get_ia5_string_value(val)?;
+        return Ok(());
     }
     //-- Legacy attributes
     //
@@ -781,38 +801,39 @@ fn process_atv(oid: &OID, val: &ASN1Block, iblock: &mut InfoBlock)
     //
     //EmailAddress ::=     IA5String (SIZE (1..ub-emailaddress-length))
     if oid == oid!(1,2,840,113549,1,9,1) {
-        iblock.email = getIA5StringValue(val)?;
+        iblock.email = get_ia5_string_value(val)?;
+        return Ok(());
     }
 
     Err(X509ParseError::UnknownAttrTypeValue)
 }
 
-fn getStringValue(a: &ASN1Block) -> Result<String,X509ParseError>
+fn get_string_value(a: &ASN1Block) -> Result<String,X509ParseError>
 {
     match a {
-        &ASN1Block::TeletexString(_,ref v)   => Ok(v.clone()),
-        &ASN1Block::PrintableString(_,ref v) => Ok(v.clone()),
-        &ASN1Block::UniversalString(_,ref v) => Ok(v.clone()),
-        &ASN1Block::UTF8String(_,ref v)      => Ok(v.clone()),
-        &ASN1Block::BMPString(_,ref v)       => Ok(v.clone()),
+        &ASN1Block::TeletexString(_,_,ref v)   => Ok(v.clone()),
+        &ASN1Block::PrintableString(_,_,ref v) => Ok(v.clone()),
+        &ASN1Block::UniversalString(_,_,ref v) => Ok(v.clone()),
+        &ASN1Block::UTF8String(_,_,ref v)      => Ok(v.clone()),
+        &ASN1Block::BMPString(_,_,ref v)       => Ok(v.clone()),
         _                                    =>
             Err(X509ParseError::IllegalStringValue)
     }
 }
 
-fn getPrintableStringValue(a: &ASN1Block) -> Result<String,X509ParseError>
+fn get_printable_string_value(a: &ASN1Block) -> Result<String,X509ParseError>
 {
     match a {
-        &ASN1Block::PrintableString(_,ref v) => Ok(v.clone()),
+        &ASN1Block::PrintableString(_,_,ref v) => Ok(v.clone()),
         _                                    =>
             Err(X509ParseError::IllegalStringValue)
     }
 }
 
-fn getIA5StringValue(a: &ASN1Block) -> Result<String,X509ParseError>
+fn get_ia5_string_value(a: &ASN1Block) -> Result<String,X509ParseError>
 {
     match a {
-        &ASN1Block::IA5String(_,ref v)       => Ok(v.clone()),
+        &ASN1Block::IA5String(_,_,ref v)       => Ok(v.clone()),
         _                                    =>
             Err(X509ParseError::IllegalStringValue)
     }
@@ -820,8 +841,8 @@ fn getIA5StringValue(a: &ASN1Block) -> Result<String,X509ParseError>
 
 #[derive(Clone,Debug,PartialEq)]
 struct Validity {
-    notBefore: DateTime<Utc>,
-    notAfter:  DateTime<Utc>
+    not_before: DateTime<Utc>,
+    not_after:  DateTime<Utc>
 }
 
 fn get_validity_data(bs: &[ASN1Block])
@@ -831,13 +852,13 @@ fn get_validity_data(bs: &[ASN1Block])
         // Validity ::= SEQUENCE {
         //      notBefore      Time,
         //      notAfter       Time  }
-        Some((&ASN1Block::Sequence(_, ref valxs), rest)) => {
+        Some((&ASN1Block::Sequence(_, _, ref valxs), rest)) => {
             if valxs.len() != 2 {
                 return Err(X509ParseError::ImproperValidityInfo);
             }
             let nb = get_time(&valxs[0])?;
             let na = get_time(&valxs[1])?;
-            Ok((Validity{ notBefore: nb, notAfter: na }, rest))
+            Ok((Validity{ not_before: nb, not_after: na }, rest))
         }
         _ =>
             Err(X509ParseError::NoValidityInfo)
@@ -846,8 +867,8 @@ fn get_validity_data(bs: &[ASN1Block])
 
 fn get_time(b: &ASN1Block) -> Result<DateTime<Utc>, X509ParseError> {
     match b {
-        &ASN1Block::UTCTime(_, v)         => Ok(v.clone()),
-        &ASN1Block::GeneralizedTime(_, v) => Ok(v.clone()),
+        &ASN1Block::UTCTime(_, _, v)         => Ok(v.clone()),
+        &ASN1Block::GeneralizedTime(_, _, v) => Ok(v.clone()),
         _                                 =>
             Err(X509ParseError::ImproperValidityInfo)
     }
@@ -860,7 +881,7 @@ fn get_subject_pki(b: &[ASN1Block])
         // SubjectPublicKeyInfo  ::=  SEQUENCE  {
         //      algorithm            AlgorithmIdentifier,
         //      subjectPublicKey     BIT STRING  }
-        Some((&ASN1Block::Sequence(_, ref info), rest)) => {
+        Some((&ASN1Block::Sequence(_, _, ref info), rest)) => {
             if info.len() != 2 {
                 return Err(X509ParseError::ImproperSubjectPublicKeyInfo)
             }
@@ -891,7 +912,7 @@ fn get_rsa_public_key(b: &ASN1Block)
     -> Result<RSAPublicKey, X509ParseError>
 {
     match b {
-        &ASN1Block::BitString(_, size, ref vec) if size % 8 == 0 => {
+        &ASN1Block::BitString(_, _, size, ref vec) if size % 8 == 0 => {
             der_decode(vec)
         }
         _ =>
