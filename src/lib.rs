@@ -9,10 +9,10 @@ extern crate simple_asn1;
 use chrono::{DateTime,Utc};
 use num::{BigInt,BigUint,ToPrimitive};
 use simple_asn1::{ASN1Block,ASN1Class,FromASN1,OID,ToASN1};
-use simple_asn1::{ASN1DecodeErr,ASN1EncodeErr};
+use simple_asn1::{ASN1DecodeErr,ASN1EncodeErr,der_decode};
 
 #[derive(Clone,Debug,PartialEq)]
-enum HashAlgorithm { MD2, MD5, SHA1, SHA224, SHA256, SHA384, SHA512 }
+enum HashAlgorithm { None, MD2, MD5, SHA1, SHA224, SHA256, SHA384, SHA512 }
 
 #[derive(Clone,Debug,PartialEq)]
 enum PubKeyAlgorithm { RSA, RSAPSS, DSA, EC, DH, Unknown(OID) }
@@ -23,7 +23,52 @@ enum X509ParseError {
     NotEnoughData, ItemNotFound, IllegalFormat, NoSerialNumber,
     NoSignatureAlgorithm, NoNameInformation, IllFormedNameInformation,
     NoValueForName, UnknownAttrTypeValue, IllegalStringValue, NoValidityInfo,
-    ImproperValidityInfo
+    ImproperValidityInfo, NoSubjectPublicKeyInfo, ImproperSubjectPublicKeyInfo,
+    BadPublicKeyAlgorithm, UnsupportedPublicKey, InvalidRSAKey,
+    UnsupportedExtension, UnexpectedNegativeNumber, MissingNumber
+}
+
+#[derive(Clone,Debug,PartialEq)]
+enum X509PublicKey {
+    RSA(RSAPublicKey)
+}
+
+#[derive(Clone,Debug,PartialEq)]
+struct RSAPublicKey {
+    bit_size: usize,
+    n: BigUint,
+    e: BigUint
+}
+
+impl FromASN1 for RSAPublicKey {
+    type Error = X509ParseError;
+
+    fn from_asn1(bs: &[ASN1Block])
+        -> Result<(RSAPublicKey,&[ASN1Block]),X509ParseError>
+    {
+        match bs.split_first() {
+            None =>
+                Err(X509ParseError::ItemNotFound),
+            Some((&ASN1Block::Sequence(_, ref items), rest))
+                if items.len() == 2 =>
+            {
+                let n = decode_biguint(&items[0])?;
+                let e = decode_biguint(&items[1])?;
+                let nsize = n.bits();
+                let mut rsa_size = 256;
+
+                while rsa_size < nsize {
+                    rsa_size = rsa_size * 2;
+                }
+
+                let res = RSAPublicKey{ bit_size: rsa_size, n: n, e: e };
+
+                Ok((res, rest))
+            }
+            Some(_) =>
+                Err(X509ParseError::InvalidRSAKey)
+        }
+    }
 }
 
 impl From<ASN1DecodeErr> for X509ParseError {
@@ -108,6 +153,12 @@ impl FromASN1 for SignatureAlgorithm {
             Some((x, rest)) => {
                 match x {
                     &ASN1Block::ObjectIdentifier(_, ref oid) => {
+                        if oid == oid!(1,2,840,113549,1,1,1) {
+                            return Ok((SignatureAlgorithm {
+                                hash_alg: HashAlgorithm::None,
+                                key_alg: PubKeyAlgorithm::RSA
+                            }, rest));
+                        }
                         if oid == oid!(1,2,840,113549,1,1,5) {
                             return Ok((SignatureAlgorithm {
                                 hash_alg: HashAlgorithm::SHA1,
@@ -150,10 +201,22 @@ impl FromASN1 for SignatureAlgorithm {
                                 key_alg: PubKeyAlgorithm::RSA
                             }, rest));
                         }
+                        if oid == oid!(1,2,840,10040,4,1) {
+                            return Ok((SignatureAlgorithm {
+                                hash_alg: HashAlgorithm::None,
+                                key_alg: PubKeyAlgorithm::DSA
+                            }, rest));
+                        }
                         if oid == oid!(1,2,840,10040,4,3) {
                             return Ok((SignatureAlgorithm {
                                 hash_alg: HashAlgorithm::SHA1,
                                 key_alg: PubKeyAlgorithm::DSA
+                            }, rest));
+                        }
+                        if oid == oid!(1,2,840,10045,2,1) {
+                            return Ok((SignatureAlgorithm {
+                                hash_alg: HashAlgorithm::None,
+                                key_alg: PubKeyAlgorithm::EC
                             }, rest));
                         }
                         if oid == oid!(1,2,840,10045,4,1) {
@@ -184,6 +247,12 @@ impl FromASN1 for SignatureAlgorithm {
                             return Ok((SignatureAlgorithm {
                                 hash_alg: HashAlgorithm::SHA512,
                                 key_alg: PubKeyAlgorithm::EC
+                            }, rest));
+                        }
+                        if oid == oid!(1,2,840,113549,1,1,10) {
+                            return Ok((SignatureAlgorithm {
+                                hash_alg: HashAlgorithm::None,
+                                key_alg: PubKeyAlgorithm::RSAPSS
                             }, rest));
                         }
                         if oid == oid!(2,16,840,1,101,3,4,2,1) {
@@ -222,6 +291,12 @@ impl FromASN1 for SignatureAlgorithm {
                                 key_alg: PubKeyAlgorithm::DSA
                             }, rest));
                         }
+                        if oid == oid!(1,2,840,10046,2,1) {
+                            return Ok((SignatureAlgorithm {
+                                hash_alg: HashAlgorithm::None,
+                                key_alg: PubKeyAlgorithm::DH
+                            }, rest));
+                        }
                         Err(X509ParseError::ItemNotFound)
                     }
                     _ =>
@@ -253,6 +328,7 @@ impl ToASN1 for SignatureAlgorithm {
         let oid = match self.key_alg {
             PubKeyAlgorithm::RSA =>
                 match self.hash_alg {
+                    HashAlgorithm::None   => oid!(1,2,840,113549,1,1,1),
                     HashAlgorithm::MD2    => oid!(1,2,840,113549,1,1,2),
                     HashAlgorithm::MD5    => oid!(1,2,840,113549,1,1,4),
                     HashAlgorithm::SHA1   => oid!(1,2,840,113549,1,1,5),
@@ -263,6 +339,7 @@ impl ToASN1 for SignatureAlgorithm {
                 },
             PubKeyAlgorithm::RSAPSS =>
                 match self.hash_alg {
+                    HashAlgorithm::None   => oid!(1,2,840,113549,1,1,10),
                     HashAlgorithm::MD2    => return Err(badval),
                     HashAlgorithm::MD5    => return Err(badval),
                     HashAlgorithm::SHA1   => return Err(badval),
@@ -273,6 +350,7 @@ impl ToASN1 for SignatureAlgorithm {
                 },
             PubKeyAlgorithm::DSA =>
                 match self.hash_alg {
+                    HashAlgorithm::None   => oid!(1,2,840,10040,4,1),
                     HashAlgorithm::MD2    => return Err(badval),
                     HashAlgorithm::MD5    => return Err(badval),
                     HashAlgorithm::SHA1   => oid!(1,2,840,10040,4,3),
@@ -283,6 +361,7 @@ impl ToASN1 for SignatureAlgorithm {
                 },
             PubKeyAlgorithm::EC =>
                 match self.hash_alg {
+                    HashAlgorithm::None   => oid!(1,2,840,10045,2,1),
                     HashAlgorithm::MD2    => return Err(badval),
                     HashAlgorithm::MD5    => return Err(badval),
                     HashAlgorithm::SHA1   => oid!(1,2,840,10045,4,1),
@@ -292,23 +371,29 @@ impl ToASN1 for SignatureAlgorithm {
                     HashAlgorithm::SHA512 => oid!(1,2,840,10045,4,3,4),
                 },
             PubKeyAlgorithm::DH =>
-                return Err(badval),
-            PubKeyAlgorithm::Unknown(_) =>
-                return Err(badval)
+                match self.hash_alg {
+                    HashAlgorithm::None   => oid!(1,2,840,10046,2,1),
+                    _                     => return Err(badval)
+                }
+            PubKeyAlgorithm::Unknown(ref oid) =>
+                match self.hash_alg {
+                    HashAlgorithm::None   => oid.clone(),
+                    _                     => return Err(badval)
+                }
         };
         Ok(vec![ASN1Block::ObjectIdentifier(c, oid)])
     }
 }
 
+#[derive(Clone,Debug,PartialEq)]
 struct Certificate {
     version: u32,
-    serial: BigInt,
-    sig_alg: SignatureAlgorithm,
-    issuer_dn: String,
-    subject_dn: String,
-    valid_start: (),
-    valid_end: (),
-    public_key: (),
+    serial: BigUint,
+    signature_alg: SignatureAlgorithm,
+    issuer: InfoBlock,
+    subject: InfoBlock,
+    validity: Validity,
+    subject_key: X509PublicKey,
     extensions: Vec<()>
 }
 
@@ -344,7 +429,7 @@ impl FromASN1 for Certificate {
 }
 
 fn get_tbs_certificate(x: &ASN1Block)
-    -> Result<(),X509ParseError>
+    -> Result<Certificate,X509ParseError>
 {
     match x {
         &ASN1Block::Sequence(_, ref v0) => {
@@ -352,7 +437,7 @@ fn get_tbs_certificate(x: &ASN1Block)
              //      version         [0]  Version DEFAULT v1,
              let (version, v1) = get_version(v0)?;
              //      serialNumber         CertificateSerialNumber,
-             let (serial, v2) = get_serial_number(v1)?;
+             let (serial, v2) = get_serial(v1)?;
              //      signature            AlgorithmIdentifier,
              let (algo, v3) = get_signature_info(v2)?;
              //      issuer               Name,
@@ -361,8 +446,16 @@ fn get_tbs_certificate(x: &ASN1Block)
              let (validity, v5) = get_validity_data(v4)?;
              //      subject              Name,
              let (subject, v6) = get_name_data(v5)?;
-             println!("v6: {:?}", v6);
              //      subjectPublicKeyInfo SubjectPublicKeyInfo,
+             let (subpki, v7) = get_subject_pki(v6)?;
+
+             if (version < 3) && !v7.is_empty() {
+                 return Err(X509ParseError::UnsupportedExtension)
+             }
+
+             // FIXME: Support v3 extensions
+             if !v7.is_empty() {
+                 return Err(X509ParseError::UnsupportedExtension)
              //      issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
              //                           -- If present, version MUST be v2 or v3
              //      subjectUniqueID [2]  IMPLICIT UniqueIdentifier OPTIONAL,
@@ -370,12 +463,18 @@ fn get_tbs_certificate(x: &ASN1Block)
              //      extensions      [3]  Extensions OPTIONAL
              //                           -- If present, version MUST be v3 --  }
              //
-             println!("version: {}", version);
-             println!("serial#: {}", serial);
-             println!("issuer: {:?}", issuer);
-             println!("validity: {:?}", validity);
-             println!("subject: {:?}", subject);
-             Err(X509ParseError::IllegalFormat)
+             }
+
+            Ok(Certificate{
+                version: version,
+                serial: serial,
+                signature_alg: algo,
+                issuer: issuer,
+                subject: subject,
+                validity: validity,
+                subject_key: subpki,
+                extensions: vec![]
+            })
         }
         _ =>
             Err(X509ParseError::IllegalFormat)
@@ -415,18 +514,29 @@ fn get_version(bs: &[ASN1Block])
     }
 }
 
-fn get_serial_number(bs: &[ASN1Block])
-    -> Result<(BigUint, &[ASN1Block]),X509ParseError>
+fn get_serial(bs: &[ASN1Block])
+    -> Result<(BigUint,&[ASN1Block]),X509ParseError>
 {
     match bs.split_first() {
-        Some((&ASN1Block::Integer(_, ref v), rest)) => {
+        Some((first, rest)) => {
+            let res = decode_biguint(first)?;
+            Ok((res, rest))
+        }
+        None =>
+            Err(X509ParseError::NoSerialNumber)
+    }
+}
+
+fn decode_biguint(b: &ASN1Block) -> Result<BigUint,X509ParseError> {
+    match b {
+        &ASN1Block::Integer(_, ref v) => {
             match v.to_biguint() {
-                Some(sn) => Ok((sn, rest)),
-                _        => Err(X509ParseError::NoSerialNumber)
+                Some(sn) => Ok(sn),
+                _        => Err(X509ParseError::UnexpectedNegativeNumber)
             }
         }
         _ =>
-            Err(X509ParseError::NoSerialNumber)
+            Err(X509ParseError::MissingNumber)
     }
 }
 
@@ -743,6 +853,52 @@ fn get_time(b: &ASN1Block) -> Result<DateTime<Utc>, X509ParseError> {
     }
 }
 
+fn get_subject_pki(b: &[ASN1Block])
+    -> Result<(X509PublicKey, &[ASN1Block]), X509ParseError>
+{
+    match b.split_first() {
+        // SubjectPublicKeyInfo  ::=  SEQUENCE  {
+        //      algorithm            AlgorithmIdentifier,
+        //      subjectPublicKey     BIT STRING  }
+        Some((&ASN1Block::Sequence(_, ref info), rest)) => {
+            if info.len() != 2 {
+                return Err(X509ParseError::ImproperSubjectPublicKeyInfo)
+            }
+            let alginfo = get_signature_alg(&info[0])?;
+
+            // this better not really be a signature with a hash
+            if alginfo.hash_alg != HashAlgorithm::None {
+                return Err(X509ParseError::BadPublicKeyAlgorithm)
+            }
+
+            // the actual key format depends on the algorithm
+            match alginfo.key_alg {
+                PubKeyAlgorithm::RSA => {
+                    let key = get_rsa_public_key(&info[1])?;
+                    Ok((X509PublicKey::RSA(key), rest))
+                }
+                _ => {
+                    Err(X509ParseError::UnsupportedPublicKey)
+                }
+            }
+        }
+        _ =>
+            Err(X509ParseError::NoSubjectPublicKeyInfo)
+    }
+}
+
+fn get_rsa_public_key(b: &ASN1Block)
+    -> Result<RSAPublicKey, X509ParseError>
+{
+    match b {
+        &ASN1Block::BitString(_, size, ref vec) if size % 8 == 0 => {
+            der_decode(vec)
+        }
+        _ =>
+            Err(X509ParseError::InvalidRSAKey)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use quickcheck::{Arbitrary,Gen};
@@ -795,6 +951,10 @@ mod tests {
         fn arbitrary<G: Gen>(g: &mut G) -> SignatureAlgorithm {
             let possibles = vec![
                     SignatureAlgorithm {
+                      hash_alg: HashAlgorithm::None,
+                      key_alg: PubKeyAlgorithm::RSA
+                    },
+                    SignatureAlgorithm {
                       hash_alg: HashAlgorithm::SHA1,
                       key_alg: PubKeyAlgorithm::RSA
                     },
@@ -823,8 +983,16 @@ mod tests {
                       key_alg: PubKeyAlgorithm::RSA
                     },
                     SignatureAlgorithm {
+                      hash_alg: HashAlgorithm::None,
+                      key_alg: PubKeyAlgorithm::DSA
+                    },
+                    SignatureAlgorithm {
                       hash_alg: HashAlgorithm::SHA1,
                       key_alg: PubKeyAlgorithm::DSA
+                    },
+                    SignatureAlgorithm {
+                      hash_alg: HashAlgorithm::None,
+                      key_alg: PubKeyAlgorithm::EC
                     },
                     SignatureAlgorithm {
                       hash_alg: HashAlgorithm::SHA1,
@@ -845,6 +1013,10 @@ mod tests {
                     SignatureAlgorithm {
                       hash_alg: HashAlgorithm::SHA512,
                       key_alg: PubKeyAlgorithm::EC
+                    },
+                    SignatureAlgorithm {
+                      hash_alg: HashAlgorithm::None,
+                      key_alg: PubKeyAlgorithm::RSAPSS
                     },
                     SignatureAlgorithm {
                       hash_alg: HashAlgorithm::SHA256,
