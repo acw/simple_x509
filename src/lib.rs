@@ -401,12 +401,12 @@ fn get_signature_alg(x: &ASN1Block)
 fn get_version(bs: &[ASN1Block])
     -> Result<(u32, &[ASN1Block]),X509ParseError>
 {
-    match bs.first() {
-        Some(&ASN1Block::Integer(_, ref v)) => {
+    match bs.split_first() {
+        Some((&ASN1Block::Integer(_, ref v), rest)) => {
             match v.to_u8() {
-                Some(0) => Ok((1, &bs[1..])),
-                Some(1) => Ok((2, &bs[1..])),
-                Some(2) => Ok((3, &bs[1..])),
+                Some(0) => Ok((1, rest)),
+                Some(1) => Ok((2, rest)),
+                Some(2) => Ok((3, rest)),
                 _       => Ok((1, &bs))
             }
         }
@@ -418,10 +418,10 @@ fn get_version(bs: &[ASN1Block])
 fn get_serial_number(bs: &[ASN1Block])
     -> Result<(BigUint, &[ASN1Block]),X509ParseError>
 {
-    match bs.first() {
-        Some(&ASN1Block::Integer(_, ref v)) => {
+    match bs.split_first() {
+        Some((&ASN1Block::Integer(_, ref v), rest)) => {
             match v.to_biguint() {
-                Some(sn) => Ok((sn, &bs[1..])),
+                Some(sn) => Ok((sn, rest)),
                 _        => Err(X509ParseError::NoSerialNumber)
             }
         }
@@ -433,10 +433,10 @@ fn get_serial_number(bs: &[ASN1Block])
 fn get_signature_info(bs: &[ASN1Block])
     -> Result<(SignatureAlgorithm, &[ASN1Block]),X509ParseError>
 {
-    match bs.first() {
-        Some(x) => {
+    match bs.split_first() {
+        Some((x, rest)) => {
             let alg = get_signature_alg(&x)?;
-            Ok((alg, &bs[1..]))
+            Ok((alg, rest))
         }
         _ =>
             Err(X509ParseError::NoSignatureAlgorithm)
@@ -489,8 +489,8 @@ fn empty_block() -> InfoBlock {
 fn get_name_data(bs: &[ASN1Block])
     -> Result<(InfoBlock,&[ASN1Block]),X509ParseError>
 {
-    match bs.first() {
-        Some(x) => {
+    match bs.split_first() {
+        Some((x,rest)) => {
             match x {
                 //  Name ::= CHOICE { -- only one possibility for now --
                 //     rdnSequence  RDNSequence }
@@ -512,7 +512,7 @@ fn get_name_data(bs: &[ASN1Block])
                                 return Err(X509ParseError::IllFormedNameInformation)
                         }
                     }
-                    Ok((iblock, &bs[1..]))
+                    Ok((iblock, rest))
                 }
                 _ =>
                     Err(X509ParseError::NoNameInformation)
@@ -717,17 +717,17 @@ struct Validity {
 fn get_validity_data(bs: &[ASN1Block])
     -> Result<(Validity,&[ASN1Block]),X509ParseError>
 {
-    match bs.first() {
+    match bs.split_first() {
         // Validity ::= SEQUENCE {
         //      notBefore      Time,
         //      notAfter       Time  }
-        Some(&ASN1Block::Sequence(_, ref valxs)) => {
+        Some((&ASN1Block::Sequence(_, ref valxs), rest)) => {
             if valxs.len() != 2 {
                 return Err(X509ParseError::ImproperValidityInfo);
             }
             let nb = get_time(&valxs[0])?;
             let na = get_time(&valxs[1])?;
-            Ok((Validity{ notBefore: nb, notAfter: na }, &bs[1..]))
+            Ok((Validity{ notBefore: nb, notAfter: na }, rest))
         }
         _ =>
             Err(X509ParseError::NoValidityInfo)
