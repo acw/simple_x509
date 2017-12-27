@@ -5,11 +5,15 @@ extern crate num;
 extern crate quickcheck;
 #[macro_use]
 extern crate simple_asn1;
+extern crate simple_rsa;
 
 use chrono::{DateTime,Utc};
 use num::{BigUint,ToPrimitive};
 use simple_asn1::{ASN1Block,ASN1Class,FromASN1,FromASN1WithBody,OID,ToASN1};
 use simple_asn1::{ASN1DecodeErr,ASN1EncodeErr,der_decode};
+use simple_rsa::{RSAPublicKey,RSAError,SigningHash,
+                 SIGNING_HASH_SHA1, SIGNING_HASH_SHA224, SIGNING_HASH_SHA256,
+                 SIGNING_HASH_SHA384, SIGNING_HASH_SHA512};
 
 #[derive(Clone,Debug,PartialEq)]
 enum HashAlgorithm { None, MD2, MD5, SHA1, SHA224, SHA256, SHA384, SHA512 }
@@ -17,16 +21,16 @@ enum HashAlgorithm { None, MD2, MD5, SHA1, SHA224, SHA256, SHA384, SHA512 }
 #[derive(Clone,Debug,PartialEq)]
 enum PubKeyAlgorithm { RSA, RSAPSS, DSA, EC, DH, Unknown(OID) }
 
-#[derive(Clone,Debug,PartialEq)]
+#[derive(Debug)]
 enum X509ParseError {
-    ASN1DecodeError(ASN1DecodeErr),
+    ASN1DecodeError(ASN1DecodeErr), RSAError(RSAError),
     NotEnoughData, ItemNotFound, IllegalFormat, NoSerialNumber,
     NoSignatureAlgorithm, NoNameInformation, IllFormedNameInformation,
     NoValueForName, UnknownAttrTypeValue, IllegalStringValue, NoValidityInfo,
     ImproperValidityInfo, NoSubjectPublicKeyInfo, ImproperSubjectPublicKeyInfo,
     BadPublicKeyAlgorithm, UnsupportedPublicKey, InvalidRSAKey,
     UnsupportedExtension, UnexpectedNegativeNumber, MissingNumber,
-    NoSignatureFound
+    NoSignatureFound, UnsupportedSignature, SignatureFailed
 }
 
 #[derive(Clone,Debug,PartialEq)]
@@ -34,47 +38,15 @@ enum X509PublicKey {
     RSA(RSAPublicKey)
 }
 
-#[derive(Clone,Debug,PartialEq)]
-struct RSAPublicKey {
-    bit_size: usize,
-    n: BigUint,
-    e: BigUint
-}
-
-impl FromASN1 for RSAPublicKey {
-    type Error = X509ParseError;
-
-    fn from_asn1(bs: &[ASN1Block])
-        -> Result<(RSAPublicKey,&[ASN1Block]),X509ParseError>
-    {
-        match bs.split_first() {
-            None =>
-                Err(X509ParseError::ItemNotFound),
-            Some((&ASN1Block::Sequence(_, _, ref items), rest))
-                if items.len() == 2 =>
-            {
-                let n = decode_biguint(&items[0])?;
-                let e = decode_biguint(&items[1])?;
-                let nsize = n.bits();
-                let mut rsa_size = 256;
-
-                while rsa_size < nsize {
-                    rsa_size = rsa_size * 2;
-                }
-
-                let res = RSAPublicKey{ bit_size: rsa_size, n: n, e: e };
-
-                Ok((res, rest))
-            }
-            Some(_) =>
-                Err(X509ParseError::InvalidRSAKey)
-        }
-    }
-}
-
 impl From<ASN1DecodeErr> for X509ParseError {
     fn from(e: ASN1DecodeErr) -> X509ParseError {
         X509ParseError::ASN1DecodeError(e)
+    }
+}
+
+impl From<RSAError> for X509ParseError {
+    fn from(e: RSAError) -> X509ParseError {
+        X509ParseError::RSAError(e)
     }
 }
 
@@ -401,7 +373,7 @@ struct Certificate {
 impl FromASN1WithBody for Certificate {
     type Error = X509ParseError;
 
-    fn from_asn1_with_body<'a>(bs: &'a[ASN1Block], v: &[u8])
+    fn from_asn1_with_body<'a>(bs: &'a[ASN1Block], raw_input: &[u8])
         -> Result<(Certificate,&'a[ASN1Block]),X509ParseError>
     {
         match bs.split_first() {
@@ -419,8 +391,11 @@ impl FromASN1WithBody for Certificate {
                     ASN1Block::BitString(_, _, size, ref sig)
                         if size % 8 == 0 =>
                     {
-                        println!("Offset: {}", hashend);
-                        println!("Algblock: {:?}", algblock);
+                        let signed_block: &[u8] = &raw_input[0..hashend];
+                        check_signature(algblock,
+                                        &certblock.subject_key,
+                                        signed_block,
+                                        sig.to_vec());
                         Ok((certblock, rest))
                     }
                     _ =>
@@ -430,6 +405,39 @@ impl FromASN1WithBody for Certificate {
             Some(_) =>
                 Err(X509ParseError::ItemNotFound)
         }
+    }
+}
+
+fn check_signature(alg: SignatureAlgorithm,
+                   key: &X509PublicKey,
+                   block: &[u8],
+                   sig: Vec<u8>)
+    -> Result<(),X509ParseError>
+{
+    match (alg.key_alg, key) {
+        (PubKeyAlgorithm::RSA, &X509PublicKey::RSA(ref key)) => {
+            let shash = signing_hash(alg.hash_alg)?;
+            if !key.verify(shash, block, sig) {
+                return Err(X509ParseError::SignatureFailed);
+            }
+            Ok(())
+        }
+        _ => {
+            Err(X509ParseError::UnsupportedSignature)
+        }
+    }
+}
+
+fn signing_hash(a: HashAlgorithm)
+    -> Result<&'static SigningHash,X509ParseError>
+{
+    match a {
+        HashAlgorithm::SHA1   => Ok(&SIGNING_HASH_SHA1),
+        HashAlgorithm::SHA224 => Ok(&SIGNING_HASH_SHA224),
+        HashAlgorithm::SHA256 => Ok(&SIGNING_HASH_SHA256),
+        HashAlgorithm::SHA384 => Ok(&SIGNING_HASH_SHA384),
+        HashAlgorithm::SHA512 => Ok(&SIGNING_HASH_SHA512),
+        _                     => Err(X509ParseError::UnsupportedSignature)
     }
 }
 
@@ -913,7 +921,7 @@ fn get_rsa_public_key(b: &ASN1Block)
 {
     match b {
         &ASN1Block::BitString(_, _, size, ref vec) if size % 8 == 0 => {
-            der_decode(vec)
+            der_decode(vec).map_err(|x| X509ParseError::RSAError(x))
         }
         _ =>
             Err(X509ParseError::InvalidRSAKey)
@@ -1087,6 +1095,5 @@ mod tests {
     #[test]
     fn x509_tests() {
         assert!(can_parse("test/server.bin").is_ok());
-        assert!(can_parse("test/key.bin").is_ok());
     }
 }

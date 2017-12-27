@@ -8,7 +8,14 @@ chrono      = "^0.4.0"
 num         = "^0.1.40"
 sha-1       = "^0.7.0"
 sha2        = "^0.7.0"
-simple_asn1 = { path = "../simple_asn1" }
+simple_asn1 = "^0.1.0"
+simple_rsa  = { path = "../simple_rsa" }
 
 [dev-dependencies]
 quickcheck = "^0.4.1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.test]
+opt-level = 1
