@@ -1094,6 +1094,10 @@ mod tests {
 
     #[test]
     fn x509_tests() {
-        assert!(can_parse("test/server.bin").is_ok());
+        assert!(can_parse("test/rsa2048-1.der").is_ok());
+        assert!(can_parse("test/rsa2048-2.der").is_ok());
+        assert!(can_parse("test/rsa4096-1.der").is_ok());
+        assert!(can_parse("test/rsa4096-2.der").is_ok());
+        assert!(can_parse("test/rsa4096-3.der").is_ok());
     }
 }
