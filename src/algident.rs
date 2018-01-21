@@ -3,16 +3,16 @@ use num::BigUint;
 use num::bigint::ToBigInt;
 use simple_asn1::{ASN1Block,ASN1Class,ASN1EncodeErr,FromASN1,OID,ToASN1};
 
-#[derive(Clone,Debug,PartialEq)]
-enum HashAlgorithm { SHA1, SHA224, SHA256, SHA384, SHA512 }
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub enum HashAlgorithm { SHA1, SHA224, SHA256, SHA384, SHA512 }
 
-#[derive(Clone,Debug,PartialEq)]
-enum PublicKeyInfo { RSA, DSA, EC }
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub enum PublicKeyInfo { RSA, DSA, EC }
 
 #[derive(Clone,Debug,PartialEq)]
 pub struct AlgorithmIdentifier {
-    hash: HashAlgorithm,
-    algo: PublicKeyInfo
+    pub hash: HashAlgorithm,
+    pub algo: PublicKeyInfo
 }
 
 impl FromASN1 for AlgorithmIdentifier {
@@ -32,7 +32,7 @@ impl FromASN1 for AlgorithmIdentifier {
     }
 }
 
-fn decode_algorithm_ident(x: &ASN1Block)
+pub fn decode_algorithm_ident(x: &ASN1Block)
     -> Result<AlgorithmIdentifier,X509ParseError>
 {
     // AlgorithmIdentifier  ::=  SEQUENCE  {

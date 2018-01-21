@@ -134,6 +134,17 @@ impl ToASN1 for X509Serial {
     }
 }
 
+pub fn decode_signature(x: &ASN1Block)
+    -> Result<Vec<u8>,X509ParseError>
+{
+    match x {
+        &ASN1Block::BitString(_, _, size, ref sig) if size % 8 == 0 => {
+            Ok(sig.to_vec())
+        }
+        _ =>
+            Err(X509ParseError::SignatureNotFound)
+    }
+}
 
 #[cfg(test)]
 mod test {
