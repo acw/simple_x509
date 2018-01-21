@@ -62,24 +62,16 @@ fn decode_certificate(x: &ASN1Block)
     //      extensions      [3]  Extensions OPTIONAL
     //                           -- If present, version MUST be v3 --  }
     //
-    println!("x: {:?}", x);
     match x {
         &ASN1Block::Sequence(_, _, ref b0) => {
+            println!("b0 {:?}", b0);
             let (version,  b1) = X509Version::from_asn1(b0)?;
-            println!("version: {:?}", version);
             let (serial,   b2) = X509Serial::from_asn1(b1)?;
-            println!("serial: {:?}", serial);
             let (ident,    b3) = AlgorithmIdentifier::from_asn1(b2)?;
-            println!("ident: {:?}", ident);
             let (issuer,   b4) = InfoBlock::from_asn1(b3)?;
-            println!("issuer: {:?}", issuer);
             let (validity, b5) = Validity::from_asn1(b4)?;
-            println!("validity: {:?}", validity);
             let (subject,  b6) = InfoBlock::from_asn1(b5)?;
-            println!("subject: {:?}", subject);
             let (subkey,   b7) = X509PublicKey::from_asn1(b6)?;
-            println!("subkey: {:?}", subkey);
-            println!("REMAINDER: {:?}", b7);
             Ok(Certificate {
                 version: version,
                 serial: serial,
@@ -110,7 +102,6 @@ fn parse_x509(blocks: &[ASN1Block], buffer: &[u8])
             Err(X509ParseError::NotEnoughData),
         Some(&ASN1Block::Sequence(_, _, ref x)) => {
             let cert = decode_certificate(&x[0])?;
-            println!("cert: {:?}", cert);
             Ok(cert)
         }
         Some(_) =>
@@ -157,13 +148,13 @@ mod tests {
         assert!(can_parse("test/dsa3072-1.der").is_ok());
         assert!(can_parse("test/dsa3072-2.der").is_ok());
     }
-
+//
 //    #[test]
-    fn ecc_tests() {
-        assert!(can_parse("test/ec384-1.der").is_ok());
-        assert!(can_parse("test/ec384-2.der").is_ok());
-        assert!(can_parse("test/ec384-3.der").is_ok());
-    }
+//    fn ecc_tests() {
+//        assert!(can_parse("test/ec384-1.der").is_ok());
+//        assert!(can_parse("test/ec384-2.der").is_ok());
+//        assert!(can_parse("test/ec384-3.der").is_ok());
+//    }
 }
 
 /*
@@ -786,7 +777,7 @@ mod tests {
         der_decode(&buffer[..])
     }
 
-    #[test]
+    //#[test]
     fn x509_tests() {
         assert!(can_parse("test/rsa2048-1.der").is_ok());
         assert!(can_parse("test/rsa2048-2.der").is_ok());
