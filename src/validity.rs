@@ -79,13 +79,13 @@ mod test {
 
     fn arbitrary_date<G: Gen>(g: &mut G) -> DateTime<Utc> {
         loop {
-            let y = g.gen_range::<i32>(1900,3000);
-            let m = g.gen_range::<u32>(0,12);
-            let d = g.gen_range::<u32>(0,31);
-            let h = g.gen_range::<u32>(0,24);
-            let m = g.gen_range::<u32>(0,60);
-            let s = g.gen_range::<u32>(0,60);
-            match Utc.ymd_opt(y,m,d).and_hms_opt(h,m,s) {
+            let y  = g.gen_range::<i32>(1900,3000);
+            let mo = g.gen_range::<u32>(0,12);
+            let d  = g.gen_range::<u32>(0,31);
+            let h  = g.gen_range::<u32>(0,24);
+            let mi = g.gen_range::<u32>(0,60);
+            let s  = g.gen_range::<u32>(0,60);
+            match Utc.ymd_opt(y,mo,d).and_hms_opt(h,mi,s) {
                 LocalResult::None =>
                     continue,
                 LocalResult::Single(x) =>

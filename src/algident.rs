@@ -1,6 +1,5 @@
 use error::X509ParseError;
 use num::BigUint;
-use num::bigint::ToBigInt;
 use simple_asn1::{ASN1Block,ASN1Class,ASN1EncodeErr,FromASN1,OID,ToASN1};
 
 #[derive(Clone,Copy,Debug,PartialEq)]
@@ -270,67 +269,90 @@ mod test {
     use quickcheck::{Arbitrary,Gen};
     use super::*;
 
-    fn rsa1<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const RSA1: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA1,
             algo: PublicKeyInfo::RSA
-        }
-    }
+        };
 
-    fn rsa224<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const RSA224: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA224,
             algo: PublicKeyInfo::RSA
-        }
-    }
+        };
 
-    fn rsa256<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const RSA256: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA256,
             algo: PublicKeyInfo::RSA
-        }
-    }
+        };
 
-    fn rsa384<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const RSA384: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA384,
             algo: PublicKeyInfo::RSA
-        }
-    }
+        };
 
-    fn rsa512<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const RSA512: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA512,
             algo: PublicKeyInfo::RSA
-        }
-    }
+        };
 
-    fn dsa1<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const DSA1: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA1,
             algo: PublicKeyInfo::DSA
-        }
-    }
+        };
 
-    fn dsa224<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const DSA224: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA224,
             algo: PublicKeyInfo::DSA
-        }
-    }
+        };
 
-    fn dsa256<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
+    const DSA256: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA256,
             algo: PublicKeyInfo::DSA
-        }
-    }
+        };
+
+    const EC1: AlgorithmIdentifier =
+        AlgorithmIdentifier{
+            hash: HashAlgorithm::SHA1,
+            algo: PublicKeyInfo::EC
+        };
+
+    const EC224: AlgorithmIdentifier =
+        AlgorithmIdentifier{
+            hash: HashAlgorithm::SHA224,
+            algo: PublicKeyInfo::EC
+        };
+
+    const EC256: AlgorithmIdentifier =
+        AlgorithmIdentifier{
+            hash: HashAlgorithm::SHA256,
+            algo: PublicKeyInfo::EC
+        };
+
+    const EC384: AlgorithmIdentifier =
+        AlgorithmIdentifier{
+            hash: HashAlgorithm::SHA384,
+            algo: PublicKeyInfo::EC
+        };
+
+    const EC512: AlgorithmIdentifier =
+        AlgorithmIdentifier{
+            hash: HashAlgorithm::SHA512,
+            algo: PublicKeyInfo::EC
+        };
 
     impl Arbitrary for AlgorithmIdentifier {
         fn arbitrary<G: Gen>(g: &mut G) -> AlgorithmIdentifier {
-            let opts = [rsa1,rsa224,rsa256,rsa384,rsa512,dsa1,dsa224,dsa256];
-            let f = g.choose(&opts).unwrap();
-            f(g)
+            let opts = [RSA1, RSA224, RSA256, RSA384, RSA512,
+                        DSA1, DSA224, DSA256,
+                        EC1, EC224, EC256, EC384, EC512];
+            g.choose(&opts).unwrap().clone()
         }
     }
 

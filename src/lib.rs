@@ -19,8 +19,6 @@ mod name;
 mod publickey;
 mod validity;
 
-use digest::{Input,FixedOutput};
-
 use algident::{AlgorithmIdentifier,HashAlgorithm,PublicKeyInfo,
                decode_algorithm_ident};
 use atv::InfoBlock;
@@ -28,7 +26,7 @@ use error::X509ParseError;
 use misc::{X509Serial,X509Version,decode_signature};
 use publickey::X509PublicKey;
 use sha1::Sha1;
-use sha2::{Sha224,Sha256,Sha384,Sha512};
+use sha2::{Sha224,Sha256};
 use simple_asn1::{ASN1Block,FromASN1,der_decode,from_der};
 use simple_rsa::{SIGNING_HASH_SHA1, SIGNING_HASH_SHA224, SIGNING_HASH_SHA256,
                  SIGNING_HASH_SHA384, SIGNING_HASH_SHA512};
@@ -80,7 +78,7 @@ fn decode_certificate(x: &ASN1Block)
             let (issuer,   b4) = InfoBlock::from_asn1(b3)?;
             let (validity, b5) = Validity::from_asn1(b4)?;
             let (subject,  b6) = InfoBlock::from_asn1(b5)?;
-            let (subkey,   b7) = X509PublicKey::from_asn1(b6)?;
+            let (subkey,   _ ) = X509PublicKey::from_asn1(b6)?;
             Ok(Certificate {
                 version: version,
                 serial: serial,
@@ -103,7 +101,7 @@ fn decode_certificate(x: &ASN1Block)
  *
  ******************************************************************************/
 
-fn parse_x509(buffer: &[u8]) -> Result<Certificate,X509ParseError> {
+pub fn parse_x509(buffer: &[u8]) -> Result<Certificate,X509ParseError> {
     let blocks = from_der(&buffer[..])?;
     match blocks.first() {
         None =>

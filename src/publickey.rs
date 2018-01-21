@@ -1,10 +1,8 @@
-use algident::SigAlgEncodeError;
 use error::X509ParseError;
-use num::BigUint;
-use num::bigint::ToBigInt;
+use num::{BigInt,BigUint};
 use simple_asn1::{ASN1Block,ASN1Class,ASN1EncodeErr,FromASN1,OID,ToASN1,
-                  der_decode,der_encode,from_der,to_der};
-use simple_dsa::{DSAParameterSize,DSAParameters,DSAPublicKey};
+                  der_decode,der_encode,from_der};
+use simple_dsa::{DSAParameters,DSAPublicKey};
 use simple_rsa::RSAPublicKey;
 
 #[derive(Clone,Debug,PartialEq)]
@@ -61,13 +59,18 @@ fn decode_public_key(block: &ASN1Block)
                     let key = decode_dsa_key(&info[1], &params)?;
                     return Ok(X509PublicKey::DSA(key));
                 } else {
+                    println!("Bad malginfo: {:?}", malginfo);
+                    println!("info[0]: {:?}", info[0]);
                     return Err(X509ParseError::IllFormedKey)
                 }
             }
+            println!("Bad OID: {:?}", id);
             Err(X509ParseError::IllFormedKey)
         }
-        _ =>
+        _ => {
+            println!("Bad block: {:?}", block);
             Err(X509ParseError::IllFormedKey)
+        }
     }
 }
 
@@ -107,8 +110,10 @@ fn encode_dsa_pubkey(c: ASN1Class, key: &DSAPublicKey)
     -> Result<ASN1Block, ASN1EncodeErr>
 {
     let objoid = ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,10040,4,1));
+    let objparams = encode_dsa_info(c, &key.params);
     let objkey = encode_dsa_key(c, key)?;
-    Ok(ASN1Block::Sequence(c, 0, vec![objoid, objkey]))
+    let headinfo = ASN1Block::Sequence(c, 0, vec![objoid, objparams]);
+    Ok(ASN1Block::Sequence(c, 0, vec![headinfo, objkey]))
 }
 
 fn encode_rsa_key(c: ASN1Class, k: &RSAPublicKey)
@@ -175,20 +180,11 @@ fn decode_dsa_info(v: &ASN1Block)
     }
 }
 
-fn encode_dsa_info(c: ASN1Class, params: &DSAParameters)
-    -> Result<ASN1Block,SigAlgEncodeError>
-{
-    match (params.p.to_bigint(), params.q.to_bigint(), params.g.to_bigint()) {
-        (Some(pbs), Some(qbs), Some(gbs)) => {
-            let pb = ASN1Block::Integer(c, 0, pbs);
-            let qb = ASN1Block::Integer(c, 0, qbs);
-            let gb = ASN1Block::Integer(c, 0, gbs);
-            let vs = vec![pb, qb, gb];
-            Ok(ASN1Block::Sequence(c, 0, vs))
-        }
-        _ =>
-            Err(SigAlgEncodeError::InvalidDSAValue)
-    }
+fn encode_dsa_info(c: ASN1Class, params: &DSAParameters) -> ASN1Block {
+    let p = ASN1Block::Integer(c, 0, BigInt::from(params.p.clone()));
+    let q = ASN1Block::Integer(c, 0, BigInt::from(params.q.clone()));
+    let g = ASN1Block::Integer(c, 0, BigInt::from(params.g.clone()));
+    ASN1Block::Sequence(c, 0, vec![p, q, g])
 }
 
 fn decode_biguint(b: &ASN1Block) -> Result<BigUint,X509ParseError> {
@@ -208,13 +204,13 @@ fn decode_biguint(b: &ASN1Block) -> Result<BigUint,X509ParseError> {
 
 #[cfg(test)]
 mod test {
-    use simple_dsa::DSAKeyPair;
+    use simple_dsa::{DSAParameterSize,DSAKeyPair};
     use simple_rsa::RSAKeyPair;
     use super::*;
 
     const NUM_TESTS: usize = 1;
 
-    //#[test]
+    #[test]
     fn rsa_public_key_tests() {
         for _ in 0..NUM_TESTS {
             let pair = RSAKeyPair::generate(2048).unwrap();
@@ -229,7 +225,7 @@ mod test {
         }
     }
 
-    // #[test]
+    #[test]
     fn dsa_public_key_tests() {
         for _ in 0..NUM_TESTS {
             let params = DSAParameters::generate(DSAParameterSize::L1024N160).unwrap();
