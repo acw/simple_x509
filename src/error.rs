@@ -1,5 +1,6 @@
 use simple_asn1::ASN1DecodeErr;
-use simple_dsa::{DSADecodeError,DSAError};
+use simple_dsa::DSADecodeError;
+use simple_dsa::dsa::DSAError;
 use simple_rsa::RSAError;
 
 /// The error type for parsing and validating an X.509 certificate.

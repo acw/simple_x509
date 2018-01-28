@@ -2,7 +2,7 @@ use error::X509ParseError;
 use num::{BigInt,BigUint};
 use simple_asn1::{ASN1Block,ASN1Class,ASN1EncodeErr,FromASN1,OID,ToASN1,
                   der_decode,der_encode,from_der};
-use simple_dsa::{DSAParameters,DSAPublicKey};
+use simple_dsa::dsa::{DSAParameters,DSAPublicKey};
 use simple_rsa::RSAPublicKey;
 
 #[derive(Clone,Debug,PartialEq)]
@@ -204,7 +204,7 @@ fn decode_biguint(b: &ASN1Block) -> Result<BigUint,X509ParseError> {
 
 #[cfg(test)]
 mod test {
-    use simple_dsa::{DSAParameterSize,DSAKeyPair};
+    use simple_dsa::dsa::{DSAParameterSize,DSAKeyPair};
     use simple_rsa::RSAKeyPair;
     use super::*;
 
