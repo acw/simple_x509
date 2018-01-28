@@ -103,6 +103,7 @@ fn decode_certificate(x: &ASN1Block)
 
 pub fn parse_x509(buffer: &[u8]) -> Result<Certificate,X509ParseError> {
     let blocks = from_der(&buffer[..])?;
+    println!("blocks: {:?}", blocks);
     match blocks.first() {
         None =>
             Err(X509ParseError::NotEnoughData),
@@ -184,27 +185,27 @@ mod tests {
         parse_x509(&buffer)
     }
 
-    #[test]
-    fn rsa_tests() {
-        assert!(can_parse("test/rsa2048-1.der").is_ok());
-        assert!(can_parse("test/rsa2048-2.der").is_ok());
-        assert!(can_parse("test/rsa4096-1.der").is_ok());
-        assert!(can_parse("test/rsa4096-2.der").is_ok());
-        assert!(can_parse("test/rsa4096-3.der").is_ok());
-    }
-
-    #[test]
-    fn dsa_tests() {
-        assert!(can_parse("test/dsa2048-1.der").is_ok());
-        assert!(can_parse("test/dsa2048-2.der").is_ok());
-        assert!(can_parse("test/dsa3072-1.der").is_ok());
-        assert!(can_parse("test/dsa3072-2.der").is_ok());
-    }
+//    #[test]
+//    fn rsa_tests() {
+//        assert!(can_parse("test/rsa2048-1.der").is_ok());
+//        assert!(can_parse("test/rsa2048-2.der").is_ok());
+//        assert!(can_parse("test/rsa4096-1.der").is_ok());
+//        assert!(can_parse("test/rsa4096-2.der").is_ok());
+//        assert!(can_parse("test/rsa4096-3.der").is_ok());
+//    }
 //
 //    #[test]
-//    fn ecc_tests() {
-//        assert!(can_parse("test/ec384-1.der").is_ok());
-//        assert!(can_parse("test/ec384-2.der").is_ok());
-//        assert!(can_parse("test/ec384-3.der").is_ok());
+//    fn dsa_tests() {
+//        assert!(can_parse("test/dsa2048-1.der").is_ok());
+//        assert!(can_parse("test/dsa2048-2.der").is_ok());
+//        assert!(can_parse("test/dsa3072-1.der").is_ok());
+//        assert!(can_parse("test/dsa3072-2.der").is_ok());
 //    }
+
+    #[test]
+    fn ecc_tests() {
+        assert!(can_parse("test/ec384-1.der").is_ok());
+        assert!(can_parse("test/ec384-2.der").is_ok());
+        assert!(can_parse("test/ec384-3.der").is_ok());
+    }
 }

@@ -3,12 +3,14 @@ use num::{BigInt,BigUint};
 use simple_asn1::{ASN1Block,ASN1Class,ASN1EncodeErr,FromASN1,OID,ToASN1,
                   der_decode,der_encode,from_der};
 use simple_dsa::dsa::{DSAParameters,DSAPublicKey};
+use simple_dsa::ecdsa::{EllipticCurve,ECCPublicKey};
 use simple_rsa::RSAPublicKey;
 
 #[derive(Clone,Debug,PartialEq)]
 pub enum X509PublicKey {
     DSA(DSAPublicKey),
     RSA(RSAPublicKey),
+    ECDSA(ECCPublicKey)
 }
 
 impl FromASN1 for X509PublicKey {
@@ -29,10 +31,10 @@ impl FromASN1 for X509PublicKey {
 }
 
 impl ToASN1 for X509PublicKey {
-    type Error = ASN1EncodeErr;
+    type Error = X509ParseError;
 
     fn to_asn1_class(&self, c: ASN1Class)
-        -> Result<Vec<ASN1Block>,ASN1EncodeErr>
+        -> Result<Vec<ASN1Block>,X509ParseError>
     {
         let block = encode_public_key(c, self)?;
         Ok(vec![block])
@@ -59,16 +61,22 @@ fn decode_public_key(block: &ASN1Block)
                     let key = decode_dsa_key(&info[1], &params)?;
                     return Ok(X509PublicKey::DSA(key));
                 } else {
-                    println!("Bad malginfo: {:?}", malginfo);
-                    println!("info[0]: {:?}", info[0]);
                     return Err(X509ParseError::IllFormedKey)
                 }
             }
-            println!("Bad OID: {:?}", id);
+            if id == oid!(1,2,840,10045,2,1) {
+                if let Some(alginfo) = malginfo {
+                    println!("alginfo: {:?}", alginfo);
+                    let curve = decode_ecc_info(&alginfo)?;
+                    let key = decode_ecc_key(&info[1], &curve)?;
+                    return Ok(X509PublicKey::ECDSA(key));
+                } else {
+                    return Err(X509ParseError::IllFormedKey)
+                }
+            }
             Err(X509ParseError::IllFormedKey)
         }
         _ => {
-            println!("Bad block: {:?}", block);
             Err(X509ParseError::IllFormedKey)
         }
     }
@@ -90,16 +98,17 @@ fn strip_algident(block: &ASN1Block)
 }
 
 fn encode_public_key(c: ASN1Class, key: &X509PublicKey)
-    -> Result<ASN1Block, ASN1EncodeErr>
+    -> Result<ASN1Block, X509ParseError>
 {
     match key {
-        &X509PublicKey::RSA(ref rsa) => encode_rsa_pubkey(c, rsa),
-        &X509PublicKey::DSA(ref dsa) => encode_dsa_pubkey(c, dsa)
+        &X509PublicKey::RSA(ref rsa)   => encode_rsa_pubkey(c, rsa),
+        &X509PublicKey::DSA(ref dsa)   => encode_dsa_pubkey(c, dsa),
+        &X509PublicKey::ECDSA(ref ecc) => encode_ecc_pubkey(c, ecc)
     }
 }
 
 fn encode_rsa_pubkey(c: ASN1Class, key: &RSAPublicKey)
-    -> Result<ASN1Block, ASN1EncodeErr>
+    -> Result<ASN1Block, X509ParseError>
 {
     let objoid = ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,113549,1,1,1));
     let objkey = encode_rsa_key(c, key)?;
@@ -107,7 +116,7 @@ fn encode_rsa_pubkey(c: ASN1Class, key: &RSAPublicKey)
 }
 
 fn encode_dsa_pubkey(c: ASN1Class, key: &DSAPublicKey)
-    -> Result<ASN1Block, ASN1EncodeErr>
+    -> Result<ASN1Block, X509ParseError>
 {
     let objoid = ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,10040,4,1));
     let objparams = encode_dsa_info(c, &key.params);
@@ -116,8 +125,18 @@ fn encode_dsa_pubkey(c: ASN1Class, key: &DSAPublicKey)
     Ok(ASN1Block::Sequence(c, 0, vec![headinfo, objkey]))
 }
 
+fn encode_ecc_pubkey(c: ASN1Class, key: &ECCPublicKey)
+    -> Result<ASN1Block, X509ParseError>
+{
+    let objoid = ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,10045,4,1));
+    let objparams = encode_ecc_info(c, &key.curve)?;
+    let objkey = encode_ecc_key(c, key)?;
+    let headinfo = ASN1Block::Sequence(c, 0, vec![objoid, objparams]);
+    Ok(ASN1Block::Sequence(c, 0, vec![headinfo, objkey]))
+}
+
 fn encode_rsa_key(c: ASN1Class, k: &RSAPublicKey)
-    -> Result<ASN1Block, ASN1EncodeErr>
+    -> Result<ASN1Block, X509ParseError>
 {
     let bstr = der_encode(k)?;
     Ok(ASN1Block::BitString(c, 0, bstr.len() * 8, bstr))
@@ -134,7 +153,7 @@ fn decode_rsa_key(b: &ASN1Block) -> Result<RSAPublicKey, X509ParseError> {
 }
 
 fn encode_dsa_key(c: ASN1Class, k: &DSAPublicKey)
-    -> Result<ASN1Block, ASN1EncodeErr>
+    -> Result<ASN1Block, X509ParseError>
 {
     let bstr = der_encode(k)?;
     Ok(ASN1Block::BitString(c, 0, bstr.len() * 8, bstr))
@@ -161,7 +180,28 @@ fn decode_dsa_key(b: &ASN1Block, params: &DSAParameters)
             }
         }
         _ =>
-            Err(X509ParseError::InvalidRSAKey)
+            Err(X509ParseError::InvalidDSAKey)
+    }
+}
+
+fn encode_ecc_key(c: ASN1Class, k: &ECCPublicKey)
+    -> Result<ASN1Block, X509ParseError>
+{
+    unimplemented!()
+}
+
+fn decode_ecc_key(b: &ASN1Block, curve: &EllipticCurve)
+    -> Result<ECCPublicKey, X509ParseError>
+{
+    match b {
+        &ASN1Block::BitString(_, _, size, ref vec) if size % 8 == 0 => {
+            println!("vec[{}/{}]: {:?}", size, vec.len(), vec);
+            let vals = from_der(&vec);
+            println!("vals: {:?}", vals);
+            unimplemented!()
+        }
+        _ =>
+            Err(X509ParseError::InvalidECDSAKey)
     }
 }
 
@@ -185,6 +225,26 @@ fn encode_dsa_info(c: ASN1Class, params: &DSAParameters) -> ASN1Block {
     let q = ASN1Block::Integer(c, 0, BigInt::from(params.q.clone()));
     let g = ASN1Block::Integer(c, 0, BigInt::from(params.g.clone()));
     ASN1Block::Sequence(c, 0, vec![p, q, g])
+}
+
+fn decode_ecc_info(v: &ASN1Block)
+    -> Result<EllipticCurve, X509ParseError>
+{
+    let bs = vec![v.clone()];
+    EllipticCurve::from_asn1(bs.as_slice()).map_err(X509ParseError::from)
+                                           .map(|(x,_)| x)
+}
+
+fn encode_ecc_info(c: ASN1Class, curve: &EllipticCurve)
+    -> Result<ASN1Block,X509ParseError>
+{
+    let res = curve.to_asn1_class(c)?;
+    match res.first() {
+        None =>
+            Err(X509ParseError::UnknownAlgorithm),
+        Some(x) =>
+            Ok(x.clone())
+    }
 }
 
 fn decode_biguint(b: &ASN1Block) -> Result<BigUint,X509ParseError> {
@@ -238,6 +298,23 @@ mod test {
             let block2 = encode_public_key(ASN1Class::Universal, &x509public).unwrap();
             let x509public2 = decode_public_key(&block2).unwrap();
             assert_eq!(x509public, x509public2);
+        }
+    }
+
+    fn ecc_info_test(curve: &EllipticCurve) {
+        let x = encode_ecc_info(ASN1Class::Universal, curve).unwrap();
+        let curve2 = decode_ecc_info(&x).unwrap();
+        assert_eq!(curve, &curve2);
+    }
+
+    #[test]
+    fn ecdsa_public_key_tests() {
+        ecc_info_test(&EllipticCurve::p192());
+        ecc_info_test(&EllipticCurve::p224());
+        ecc_info_test(&EllipticCurve::p256());
+        ecc_info_test(&EllipticCurve::p384());
+        ecc_info_test(&EllipticCurve::p521());
+        for _ in 0..NUM_TESTS {
         }
     }
 }
