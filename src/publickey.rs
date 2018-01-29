@@ -4,14 +4,14 @@ use num::bigint::Sign;
 use simple_asn1::{ASN1Block,ASN1Class,FromASN1,OID,ToASN1,
                   der_decode,der_encode,from_der};
 use simple_dsa::dsa::{DSAParameters,DSAPublicKey};
-use simple_dsa::ecdsa::{EllipticCurve,ECCPoint,ECCPublicKey};
+use simple_dsa::ecdsa::{EllipticCurve,ECDSAPoint,ECDSAPublicKey};
 use simple_rsa::RSAPublicKey;
 
 #[derive(Clone,Debug,PartialEq)]
 pub enum X509PublicKey {
     DSA(DSAPublicKey),
     RSA(RSAPublicKey),
-    ECDSA(ECCPublicKey)
+    ECDSA(ECDSAPublicKey)
 }
 
 impl FromASN1 for X509PublicKey {
@@ -125,7 +125,7 @@ fn encode_dsa_pubkey(c: ASN1Class, key: &DSAPublicKey)
     Ok(ASN1Block::Sequence(c, 0, vec![headinfo, objkey]))
 }
 
-fn encode_ecc_pubkey(c: ASN1Class, key: &ECCPublicKey)
+fn encode_ecc_pubkey(c: ASN1Class, key: &ECDSAPublicKey)
     -> Result<ASN1Block, X509ParseError>
 {
     let objoid = ASN1Block::ObjectIdentifier(c, 0, oid!(1,2,840,10045,2,1));
@@ -184,7 +184,7 @@ fn decode_dsa_key(b: &ASN1Block, params: &DSAParameters)
     }
 }
 
-fn encode_ecc_key(c: ASN1Class, k: &ECCPublicKey)
+fn encode_ecc_key(c: ASN1Class, k: &ECDSAPublicKey)
     -> Result<ASN1Block, X509ParseError>
 {
     let mut bytes = vec![4];
@@ -210,7 +210,7 @@ fn encode_ecc_key(c: ASN1Class, k: &ECCPublicKey)
 }
 
 fn decode_ecc_key(b: &ASN1Block, curve: &EllipticCurve)
-    -> Result<ECCPublicKey, X509ParseError>
+    -> Result<ECDSAPublicKey, X509ParseError>
 {
     match b {
         &ASN1Block::BitString(_, _, size, ref vec) if size % 8 == 0 => {
@@ -224,8 +224,8 @@ fn decode_ecc_key(b: &ASN1Block, curve: &EllipticCurve)
                     let (xbytes, ybytes) = input.split_at(bytesize);
                     let x = BigInt::from_bytes_be(Sign::Plus, xbytes);
                     let y = BigInt::from_bytes_be(Sign::Plus, ybytes);
-                    let point = ECCPoint::new(curve, x, y)?;
-                    Ok(ECCPublicKey::new(curve, &point))
+                    let point = ECDSAPoint::new(curve, x, y)?;
+                    Ok(ECDSAPublicKey::new(curve, &point))
                 }
                 _ =>
                     Err(X509ParseError::InvalidPointForm)
@@ -296,7 +296,7 @@ fn decode_biguint(b: &ASN1Block) -> Result<BigUint,X509ParseError> {
 #[cfg(test)]
 mod test {
     use simple_dsa::dsa::{DSAParameterSize,DSAKeyPair};
-    use simple_dsa::ecdsa::{ECCKeyPair};
+    use simple_dsa::ecdsa::{ECDSAKeyPair};
     use simple_rsa::RSAKeyPair;
     use super::*;
 
@@ -348,7 +348,7 @@ mod test {
         ecc_info_test(&EllipticCurve::p384());
         ecc_info_test(&EllipticCurve::p521());
         for _ in 0..NUM_TESTS {
-            let pair = ECCKeyPair::generate(&curve256);
+            let pair = ECDSAKeyPair::generate(&curve256);
             let public = pair.public;
             let block = encode_ecc_key(ASN1Class::Universal, &public).unwrap();
             let public2 = decode_ecc_key(&block, &curve256).unwrap();
