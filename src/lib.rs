@@ -26,7 +26,7 @@ use error::X509ParseError;
 use misc::{X509Serial,X509Version,decode_signature};
 use publickey::X509PublicKey;
 use sha1::Sha1;
-use sha2::{Sha224,Sha256};
+use sha2::{Sha224,Sha256,Sha384,Sha512};
 use simple_asn1::{ASN1Block,FromASN1,der_decode,from_der};
 use simple_rsa::{SIGNING_HASH_SHA1, SIGNING_HASH_SHA224, SIGNING_HASH_SHA256,
                  SIGNING_HASH_SHA384, SIGNING_HASH_SHA512};
@@ -103,7 +103,6 @@ fn decode_certificate(x: &ASN1Block)
 
 pub fn parse_x509(buffer: &[u8]) -> Result<Certificate,X509ParseError> {
     let blocks = from_der(&buffer[..])?;
-    println!("blocks: {:?}", blocks);
     match blocks.first() {
         None =>
             Err(X509ParseError::NotEnoughData),
@@ -160,6 +159,28 @@ fn check_signature(alg: &AlgorithmIdentifier,
                     Err(X509ParseError::InvalidSignatureHash)
             }
         }
+        (PublicKeyInfo::ECDSA, &X509PublicKey::ECDSA(ref key)) => {
+            let ecdsa_sig = der_decode(&sig)?;
+            match alg.hash {
+                HashAlgorithm::SHA1
+                    if key.verify::<Sha1>(block, &ecdsa_sig) =>
+                        Ok(()),
+                HashAlgorithm::SHA224
+                    if key.verify::<Sha224>(block, &ecdsa_sig) =>
+                        Ok(()),
+                HashAlgorithm::SHA256
+                    if key.verify::<Sha256>(block, &ecdsa_sig) =>
+                        Ok(()),
+                HashAlgorithm::SHA384
+                    if key.verify::<Sha384>(block, &ecdsa_sig) =>
+                        Ok(()),
+                HashAlgorithm::SHA512
+                    if key.verify::<Sha512>(block, &ecdsa_sig) =>
+                        Ok(()),
+                _                     =>
+                    Err(X509ParseError::InvalidSignatureHash)
+            }
+        }
         _ =>
             Err(X509ParseError::InvalidSignatureData)
     }
@@ -185,22 +206,22 @@ mod tests {
         parse_x509(&buffer)
     }
 
-//    #[test]
-//    fn rsa_tests() {
-//        assert!(can_parse("test/rsa2048-1.der").is_ok());
-//        assert!(can_parse("test/rsa2048-2.der").is_ok());
-//        assert!(can_parse("test/rsa4096-1.der").is_ok());
-//        assert!(can_parse("test/rsa4096-2.der").is_ok());
-//        assert!(can_parse("test/rsa4096-3.der").is_ok());
-//    }
-//
-//    #[test]
-//    fn dsa_tests() {
-//        assert!(can_parse("test/dsa2048-1.der").is_ok());
-//        assert!(can_parse("test/dsa2048-2.der").is_ok());
-//        assert!(can_parse("test/dsa3072-1.der").is_ok());
-//        assert!(can_parse("test/dsa3072-2.der").is_ok());
-//    }
+    #[test]
+    fn rsa_tests() {
+        assert!(can_parse("test/rsa2048-1.der").is_ok());
+        assert!(can_parse("test/rsa2048-2.der").is_ok());
+        assert!(can_parse("test/rsa4096-1.der").is_ok());
+        assert!(can_parse("test/rsa4096-2.der").is_ok());
+        assert!(can_parse("test/rsa4096-3.der").is_ok());
+    }
+
+    #[test]
+    fn dsa_tests() {
+        assert!(can_parse("test/dsa2048-1.der").is_ok());
+        assert!(can_parse("test/dsa2048-2.der").is_ok());
+        assert!(can_parse("test/dsa3072-1.der").is_ok());
+        assert!(can_parse("test/dsa3072-2.der").is_ok());
+    }
 
     #[test]
     fn ecc_tests() {

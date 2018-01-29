@@ -6,7 +6,7 @@ use simple_asn1::{ASN1Block,ASN1Class,ASN1EncodeErr,FromASN1,OID,ToASN1};
 pub enum HashAlgorithm { SHA1, SHA224, SHA256, SHA384, SHA512 }
 
 #[derive(Clone,Copy,Debug,PartialEq)]
-pub enum PublicKeyInfo { RSA, DSA, EC }
+pub enum PublicKeyInfo { RSA, DSA, ECDSA }
 
 #[derive(Clone,Debug,PartialEq)]
 pub struct AlgorithmIdentifier {
@@ -80,31 +80,31 @@ pub fn decode_algorithm_ident(x: &ASN1Block)
                     if oid == oid!(1,2,840,10045,4,1) {
                         return Ok(AlgorithmIdentifier {
                             hash: HashAlgorithm::SHA1,
-                            algo: PublicKeyInfo::EC
+                            algo: PublicKeyInfo::ECDSA
                         });
                     }
                     if oid == oid!(1,2,840,10045,4,3,1) {
                         return Ok(AlgorithmIdentifier {
                             hash: HashAlgorithm::SHA224,
-                            algo: PublicKeyInfo::EC
+                            algo: PublicKeyInfo::ECDSA
                         });
                     }
                     if oid == oid!(1,2,840,10045,4,3,2) {
                         return Ok(AlgorithmIdentifier {
                             hash: HashAlgorithm::SHA256,
-                            algo: PublicKeyInfo::EC
+                            algo: PublicKeyInfo::ECDSA
                         });
                     }
                     if oid == oid!(1,2,840,10045,4,3,3) {
                         return Ok(AlgorithmIdentifier {
                             hash: HashAlgorithm::SHA384,
-                            algo: PublicKeyInfo::EC
+                            algo: PublicKeyInfo::ECDSA
                         });
                     }
                     if oid == oid!(1,2,840,10045,4,3,4) {
                         return Ok(AlgorithmIdentifier {
                             hash: HashAlgorithm::SHA512,
-                            algo: PublicKeyInfo::EC
+                            algo: PublicKeyInfo::ECDSA
                         });
                     }
 //                    if oid == oid!(2,16,840,1,101,3,4,2,1) {
@@ -232,7 +232,7 @@ fn encode_algorithm_ident(c: ASN1Class, x: &AlgorithmIdentifier)
                     Err(SigAlgEncodeError::InvalidHash),
             }
         }
-        PublicKeyInfo::EC => {
+        PublicKeyInfo::ECDSA=> {
             match x.hash {
                 HashAlgorithm::SHA1 => {
                     let o = oid!(1,2,840,10045,4,1);
@@ -320,31 +320,31 @@ mod test {
     const EC1: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA1,
-            algo: PublicKeyInfo::EC
+            algo: PublicKeyInfo::ECDSA
         };
 
     const EC224: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA224,
-            algo: PublicKeyInfo::EC
+            algo: PublicKeyInfo::ECDSA
         };
 
     const EC256: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA256,
-            algo: PublicKeyInfo::EC
+            algo: PublicKeyInfo::ECDSA
         };
 
     const EC384: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA384,
-            algo: PublicKeyInfo::EC
+            algo: PublicKeyInfo::ECDSA
         };
 
     const EC512: AlgorithmIdentifier =
         AlgorithmIdentifier{
             hash: HashAlgorithm::SHA512,
-            algo: PublicKeyInfo::EC
+            algo: PublicKeyInfo::ECDSA
         };
 
     impl Arbitrary for AlgorithmIdentifier {

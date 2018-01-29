@@ -17,7 +17,8 @@ pub enum X509ParseError {
     IllFormedAlgoInfo, IllFormedKey, IllFormedEverything,
     IllegalStringValue, NoSerialNumber, InvalidDSAInfo, ItemNotFound,
     UnknownAlgorithm, InvalidRSAKey, InvalidDSAKey, InvalidSignatureData,
-    InvalidSignatureHash, InvalidECDSAKey,
+    InvalidSignatureHash, InvalidECDSAKey, InvalidPointForm,
+    CompressedPointUnsupported,
     KeyNotFound,
     SignatureNotFound, SignatureVerificationFailed
 }
